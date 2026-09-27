@@ -307,18 +307,22 @@ Test hooks on the serial console: `x` (purifier "moves" to a dead IP), `h` (hang
     297 readings in a row with no gap (77 carried forward, 1,599 notifications, all of
     them in a reading), 178 status rows, 0 failed uploads, 0 Wi-Fi drops, free heap never
     below 205 KB, RSSI −64 to −46 dBm. The purifier was in auto for 97 windows, sleep for 199.
-  - Real power cut, 2026-09-28: the XIAO was taken off the Mac at about 08:23 and powered
-    from another USB supply (no battery, so it lost power). It booted at 08:23:34, the
-    purifier answered sync within 86 s, and the first reading landed at 08:33 with no help.
-    Cost: 3 windows. The wait was the purifier's. It had been pushing every ~35 s to the old
-    subscription right up to the cut, then sent the new one nothing for 6.5–9.4 min, and about one push
-    per window after that. The three afternoon reboots (reflashes, auto mode) each had a
-    sample within 1.4 min. Every boot gets a new random UDP port (lwIP seeds it from
-    `esp_random`) and a new token, so the new subscription can't be mistaken for the old one.
-    See Open questions.
-  Still owed: the purifier switched off at the wall (needs a person at the purifier), and
-  the watchdog bug above. Until that's fixed, a hang may not self-recover: if `stats.sh`
-  shows rows stopping while the purifier is on, unplug and replug the XIAO.
+  - Real power cut of both, 2026-09-28, between 08:20 and 08:23: the purifier was switched
+    off at the wall, and the XIAO was taken off the Mac and put on another USB supply (no
+    battery, so it lost power). The purifier came back on by itself, in the same mode
+    (sleep). The XIAO booted at 08:23:34, and the purifier was already back: the first sync
+    was answered (`syncs=1` at 86 s; a failed sync retries every 10 s). The first reading
+    landed at 08:33 with no help. Cost: 3 windows.
+    The 9 minutes were normal purifier silence, not a fault. It answers a subscribe only with
+    its next push and pushes only on change. After the cut the room sat at 1–3 µg/m³, and the
+    purifier stayed silent for up to 14 min even on a live subscription (`last_update_age_s`
+    860 at 09:00). When PM2.5 rose at 09:03 it pushed 7–24 times per window. The
+    afternoon reflash reboots each got a sample within 1.4 min, with the purifier in auto.
+  Still owed: the purifier going off while the XIAO stays up (the cut above had both off,
+  so the XIAO never saw the purifier missing; the `x` test ran the same relink loop, but
+  it recovered through discovery rather than through the saved address), and the watchdog bug
+  above. Until that's fixed, a hang may not self-recover: if `stats.sh` shows rows
+  stopping while the purifier is on, unplug and replug the XIAO.
 - **Later** — a purifier view + dashboard panel, parquet archive like Govee's `sync.sh`.
 
 Power: the XIAO is on home USB permanently (2026-09-27), so no battery or deep-sleep work.
@@ -330,10 +334,7 @@ it gets revoked, both projects' host scripts need the replacement. (Also noticed
 
 ## Open questions
 
-- Does the XIAO notice when the purifier is switched off at the wall, and recover when
-  it comes back? (M2's remaining test, needs a person at the purifier.)
-- Why did the purifier take 6.5–9.4 min to push to a new subscription after the power cut,
-  when reflash reboots got a push within 1.4 min? Two candidates: sleep mode (pushes are
-  bursty; 26% of overnight windows had none), or the dead subscription holding a slot
-  until it times out. To check, watch `n_samples` per window after the next power cut,
-  and whether the per-window rate recovers.
+- Does the XIAO notice when the purifier is switched off at the wall while the XIAO stays
+  up, and recover when it comes back? Expected in the data: readings stop (no carry-forward
+  while sync fails), status rows keep coming with `syncs` climbing every 10 s, then readings
+  resume. Needs a person at the purifier: switch it off for 5+ minutes, then on.
