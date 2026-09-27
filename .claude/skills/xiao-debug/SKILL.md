@@ -62,6 +62,15 @@ but nobody should have to replug it for us.
   `XIAO_GDB_FLASH=1 scripts/gdb.sh …` brings flash support (and the reset) back.
 - **`esp_coredump -p PORT` resets twice** (two esptool sessions) and can't find GDB unless
   it's on PATH. `coredump.sh` reads the partition in one esptool session, then decodes offline.
+- **To see boot-time lines (self-tests) without a host reset**: start `attach.sh`, then
+  `send.sh r` if the app has an `r` (esp_restart) command. A software restart keeps the
+  USB-Serial-JTAG link up, so the attach keeps reading straight through the reboot.
+  Alternatively attach 1 s after `flash.sh` returns (attach doesn't reset, so the
+  shorter wait is safe); you'll miss the first ~0.5 s.
+- **`SO_RCVTIMEO` of 0 means block forever** (lwIP). Round a remaining-time timeout up to
+  whole ms and stop below 1 ms, or a "timed" recv hangs until the next datagram.
+- **UDP datagrams over ~1.5 KB need `CONFIG_LWIP_IP4_REASSEMBLY=y`** (off by default);
+  without it fragmented replies vanish with no error.
 - **Wi-Fi blob warnings** at start (`ACK_TAB0`, `CTS_TAB0`, `(agc)`, `(trc)`, `<ba-add>`) are
   normal. Anything else at `W`/`E` deserves a look.
 

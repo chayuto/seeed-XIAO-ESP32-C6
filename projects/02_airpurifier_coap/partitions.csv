@@ -1,0 +1,7 @@
+# XIAO ESP32-C6, 4 MB flash. Bigger factory app than the IDF default (1 MB) and a
+# core dump slot so a panic can be read back after the fact (debug skill: coredump.sh).
+# Name,     Type, SubType,  Offset,   Size
+nvs,        data, nvs,      0x9000,   0x6000
+phy_init,   data, phy,      0xf000,   0x1000
+factory,    app,  factory,  0x10000,  0x300000
+coredump,   data, coredump, 0x310000, 0x10000

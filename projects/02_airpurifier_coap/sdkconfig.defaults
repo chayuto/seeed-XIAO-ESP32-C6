@@ -1,0 +1,21 @@
+# 02_airpurifier_coap — read a Philips air purifier over local CoAP.
+# No secrets or home-network details here: Wi-Fi creds and CONFIG_PURIFIER_HOST go in
+# sdkconfig.defaults.local (gitignored).
+CONFIG_IDF_TARGET="esp32c6"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# 3 MB app + core dump slot (partitions.csv, same as 01_bringup)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
+
+# The status reply is one ~2.1 KB UDP datagram, IP-fragmented on the way in.
+CONFIG_LWIP_IP4_REASSEMBLY=y
+
+# agentic-logging
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_COLORS=n
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096

@@ -73,25 +73,32 @@ wifi_sta (shared) ──► coap_min.c ──► philips_coap.c ──► main.c
 - **`philips_crypto.c`** — `encrypt` / `decrypt` / `verify`, pure functions over buffers.
   A host-side test (`tools/crypto_vectors.py`) generates vectors with the Python
   reference; the firmware runs them as a boot self-test and logs `selftest crypto=ok`.
-- **`philips_coap.c`** — one task. Sync → Observe GET → wait on `recvfrom` with a timeout.
-  Each notification: verify, decrypt, parse (cJSON, bundled in IDF), log. If nothing
-  arrives within `max_age + 15 s` (default Max-Age 60), re-sync and re-observe. Checks the
-  Observe sequence number to drop stale reorders.
-- **Output** — one line per update: `status seq=… pm25=… iai=… pwr=… mode=… raw={…}`,
-  plus a heartbeat every 30 s: uptime, heap, RSSI, last update age, resync count.
+- **`philips_coap.c`** — one UDP socket, `connect()`ed to the purifier. `philips_sync()`
+  waits for its reply; `philips_observe()` only sends the Observe GET; `philips_recv_status()`
+  takes the next datagram carrying our token (one token per session), verifies, decrypts.
+- **`main.c`** — one loop on 1 s receive windows: log every status, heartbeat every 30 s,
+  re-register after `max_age + 15 s` of silence (doubles as a liveness check), re-sync
+  after three unanswered re-registers. A repeated Observe sequence number is logged as
+  `dup` and dropped. Serial: `i` heartbeat, `g` re-register, `s` re-sync, `r` restart.
+- **Output** — `status kind=first|notify model=… pwr=… mode=…(name) fan=… pm25=… iai=…
+  err=… prefilter_h=left/total hepa_h=left/total dev_rssi=… observe=… since_get_ms=…`,
+  the raw JSON at DEBUG, and `hb up=… heap=… rssi=… updates=… errors=… observes=…
+  syncs=… dups=… last_update_age_s=… stray=…`.
 - **Config** — `CONFIG_PURIFIER_HOST` (IP) in the gitignored `sdkconfig.defaults.local`.
-  mDNS/DHCP discovery is out of scope for M1.
+  Discovery (the sync probe across the /24) is not in firmware yet.
 
 ## Milestones
 
-- **M0 — host proof.** `aioairctrl --host <ip> status` from the Mac in a scratch venv. Saves a
-  real status JSON (redacted of device IDs) as the test fixture. Proves the purifier
-  speaks this protocol before any C exists.
-- **M1 — one-shot read.** Sync + one GET, decrypt, log the raw JSON. Crypto self-test passes.
-- **M2 — live stream.** Observe notifications, resync on silence, heartbeat, survive the
-  purifier being switched off and on.
-- **M3 — typed fields.** Map the model's key set to named fields; LED blinks on each update
-  (and on a PM2.5 threshold, later).
+- **M0 — host proof.** ✅ 2026-09-27. `aioairctrl --host <ip> status` from the Mac in a
+  scratch venv. Saved a real status JSON (redacted of device IDs) as the test fixture.
+- **M1 — one-shot read.** ✅ 2026-09-27. Sync + GET, decrypt, log. Crypto self-test passes
+  against aioairctrl-generated vectors (encrypt, decrypt and tamper rejection).
+- **M2 — live stream.** ✅ 2026-09-27, except one test. Observe notifications, re-register
+  and re-sync on silence, heartbeat. Still owed: surviving the purifier being switched
+  off and on (needs a person at the purifier).
+- **M3 — typed fields.** Partly done: the AC22xx keys are decoded into the status line and
+  the LED blinks on each update. Still to do: the other key generations, and a PM2.5
+  threshold on the LED.
 - **Later (not planned):** control (`pwr`, mode), several purifiers, push to a sink (MQTT or Supabase like
   the C6-AMOLED Govee monitor), deep sleep between reads on battery.
 
@@ -130,7 +137,32 @@ What the probe taught, which the firmware must handle:
   are matched on the token.
 - The 2 KB payload arrives as one fragmented UDP datagram; the receive buffer needs ≥2.5 KB.
 
+## What the firmware taught (M1/M2, 2026-09-27)
+
+- **lwIP drops the status reply unless IP reassembly is on.** The reply is one ~2.1 KB
+  datagram, which arrives as two IP fragments, and `CONFIG_LWIP_IP4_REASSEMBLY` defaults to
+  off in ESP-IDF. `sdkconfig.defaults` turns it on.
+- **The purifier doesn't answer an Observe GET directly.** It registers the client and
+  sends at its next push: the first status came 6.5–64 s after the GET across five runs. The
+  "0.2–7 s latency" seen from the Mac was the same thing. Polling with repeated GETs
+  therefore reads whatever notification is queued, one behind. M1's polling loop did exactly
+  that (`observe=1`, "latency 0 ms"), which is why M2 listens instead.
+- **Pushes come on change.** While PM2.5 moves they arrive every 1–2 s; when nothing
+  changes they can be over 60 s apart. The Observe sequence number is the purifier's global
+  count and keeps rising across sessions.
+- **Re-registering with the same token doesn't duplicate notifications** (0 dups after a
+  manual `g`), and **two clients at once work**: the Mac's aioairctrl observed while the
+  XIAO was reading.
+- **`SO_RCVTIMEO` of 0 ms means "block forever" in lwIP.** The first receive loop passed
+  the sub-millisecond remainder of its deadline, got 0, and blocked until the next
+  datagram: a "16.7 s reply against a 12 s timeout". `wait_reply()` now rounds up and stops
+  below 1 ms, and logs `recv overran` if a receive ever blocks longer than asked.
+- Steady state on the XIAO: ~299 KB free heap (min ~294 KB), RSSI −53 to −62 dBm, no stray
+  datagrams.
+
 ## Open questions
 
-- Does the unit accept a second concurrent client alongside the Philips app? aioairctrl
-  users report the app and HA coexisting, but this needs to be seen on our unit.
+- Does the XIAO notice when the purifier is switched off at the wall, and recover when
+  it comes back? (M2's remaining test, needs a person at the purifier.)
+- Discovery in firmware: send the sync probe across the /24 when the configured IP stops
+  answering (DHCP moved it once already).
