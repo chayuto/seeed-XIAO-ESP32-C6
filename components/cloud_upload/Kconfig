@@ -1,0 +1,20 @@
+menu "Supabase upload"
+
+config XIAO_SUPABASE_URL
+    string "Supabase project URL"
+    default ""
+    help
+        https://<ref>.supabase.co - set in sdkconfig.defaults.local (gitignored).
+
+config XIAO_SUPABASE_KEY
+    string "Supabase publishable key"
+    default ""
+    help
+        sb_publishable_... - INSERT-only by RLS, and recoverable from flash, so it
+        must never be the secret key. Set in sdkconfig.defaults.local (gitignored).
+
+config XIAO_SNTP_SERVER
+    string "SNTP server"
+    default "pool.ntp.org"
+
+endmenu

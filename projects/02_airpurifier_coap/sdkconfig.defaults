@@ -14,6 +14,10 @@ CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
 # The status reply is one ~2.1 KB UDP datagram, IP-fragmented on the way in.
 CONFIG_LWIP_IP4_REASSEMBLY=y
 
+# The Supabase POST (TLS) runs on the main task; mbedTLS's handshake overflows the
+# 3.5 KB default.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
 # agentic-logging
 CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y

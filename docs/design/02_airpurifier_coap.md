@@ -253,8 +253,15 @@ The publishable key and URL go in `sdkconfig.defaults.local` (gitignored); the s
 - **C1 — purifier client as a component.** ✅ 2026-09-27. `components/philips_air`; rebuilt
   clean, host tests pass, vectors regenerate identically, on the board self-test ok and
   statuses received.
-- **C2 — first upload.** SNTP + one bucket sent on a serial command; a replay proves 409 =
-  the same row.
+- **C2 — first upload.** ✅ 2026-09-27. `components/cloud_upload` (deterministic UUIDv7 with
+  host test, SNTP clock, insert-only POST), `main/bucket.c`, serial `u`. On the board: SNTP
+  synced 3.5 s after boot; a row went in with 201 in 1.7 s; a replay in the same window came
+  back 409 with `23505` (duplicate primary key); the database held exactly the rows sent,
+  with values matching the device log. TLS POSTs take 1.3–1.7 s from home. Main task stack
+  raised to 8 KB for the TLS handshake. The test rows were deleted afterwards.
+  **Rule found on the way: upload closed buckets only.** A row's id is final the moment
+  it's minted, so uploading a window that's still open would make the later full upload a
+  409 and lose its stats. `u` breaks this on purpose, for testing only.
 - **C3 — steady state.** Bucket every 3 min, status every 5 min, an hour of running, with a
   Wi-Fi drop and a Supabase outage (bad URL) simulated to watch the ring catch up.
 - **Later** — a purifier view + dashboard panel, parquet archive like Govee's `sync.sh`.
