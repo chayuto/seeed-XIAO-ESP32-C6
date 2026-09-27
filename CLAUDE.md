@@ -8,7 +8,7 @@ touching the board.
 
 ```
 seeed-XIAO-ESP32-C6/
-├── components/          # Shared ESP-IDF components (xiao_board, wifi_sta)
+├── components/          # Shared: xiao_board, wifi_sta, philips_air (purifier CoAP client)
 ├── projects/            # NN_short_name — one ESP-IDF project each
 ├── docs/design/         # One design doc per non-trivial project, written before code
 ├── docs/private/        # Gitignored: household context, device IPs/models, drafts

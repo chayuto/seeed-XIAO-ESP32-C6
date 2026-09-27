@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Generate main/crypto_vectors.h from the reference implementation (aioairctrl).
+"""Generate crypto_vectors.h (component root) from the reference implementation (aioairctrl).
 
 The firmware's self-test checks philips_crypto.c against these, so the C port is proven
 against the Python code that Home Assistant users run, not against itself.
 
     python3 -m venv /tmp/v && /tmp/v/bin/pip install aioairctrl==0.3.1
-    /tmp/v/bin/python tools/crypto_vectors.py > main/crypto_vectors.h
+    /tmp/v/bin/python tools/crypto_vectors.py > crypto_vectors.h   # from components/philips_air/
 """
 import json
 import pathlib

@@ -1,0 +1,11 @@
+menu "Philips air purifier client"
+
+config PURIFIER_TIMEOUT_MS
+    int "Sync reply timeout (ms)"
+    default 12000
+    help
+        Measured 2026-09-27 on an AC2220: sync replies take 60-300 ms; 12 s is
+        headroom for a busy network. Status is not affected: it arrives by Observe
+        notification whenever the purifier pushes.
+
+endmenu

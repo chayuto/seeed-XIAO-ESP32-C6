@@ -11,11 +11,4 @@ config PURIFIER_PORT
     int "CoAP port"
     default 5683
 
-config PURIFIER_TIMEOUT_MS
-    int "Sync reply timeout (ms)"
-    default 12000
-    help
-        Measured 2026-09-27 on an AC2220: replies took 0.2 to 7 s from a Mac, and one
-        first status took 16.7 s from the XIAO.
-
 endmenu

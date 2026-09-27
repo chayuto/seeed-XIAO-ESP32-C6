@@ -41,10 +41,16 @@ Consequence of sharing the project: storage. Govee measured ~229 MB/year; the pu
 `fan`, `err` (last value in the bucket), `prefilter_h`, `hepa_h`, `dev_rssi`, `n_samples`.
 
 The purifier pushes **only on change**, unlike Govee sensors, which advertise on a schedule.
-An empty bucket therefore means "unchanged", not "missing". While the observation is known to
+An empty bucket therefore means "unchanged", not "missing". While the purifier is known to
 be alive, the device writes the bucket anyway, carrying the last values forward with
 `n_samples = 0`, and stops once it isn't. A gap in `ts` then means "XIAO or purifier
 offline", which is the question worth answering.
+
+**"Alive" is judged by sync, not by status** (found during M1): the purifier can go 6+
+minutes without pushing, a plain GET isn't answered either, but `/sys/dev/sync` answers in
+~100 ms. So each quiet bucket is backed by a sync probe: answered → carry forward,
+unanswered → no row. No rows are written after boot until the first real status arrives,
+because there's nothing to carry forward.
 
 Buckets rather than every notification: pushes arrive in 1–2 s bursts while PM2.5 moves, so
 raw rows would be bursty and 10–50× the volume. `pm25_max` keeps the peak, which is what a
@@ -78,7 +84,8 @@ The publishable key and URL go in `sdkconfig.defaults.local` (gitignored); the s
 
 - **M0 — schema.** ✅ 2026-09-27. Dry-run in a rolled-back transaction, applied, re-applied
   (idempotent), `verify.sh` all ok, and the Govee project's own `verify.sh` still passes.
-- **M1 — refactor.** `components/philips_air`; 02 rebuilt and re-verified on the board.
+- **M1 — refactor.** ✅ 2026-09-27. `components/philips_air`; 02 rebuilt clean, host tests
+  pass, vectors regenerate identically, and on the board: self-test ok, statuses received.
 - **M2 — first upload.** SNTP + one bucket sent on a serial command; a replay proves 409 =
   the same row.
 - **M3 — steady state.** Bucket every 3 min, status every 5 min, an hour of running, with a
@@ -87,7 +94,7 @@ The publishable key and URL go in `sdkconfig.defaults.local` (gitignored); the s
 
 ## Open questions
 
-1. Does the XIAO stay on USB power permanently? Assumed yes: no battery or deep-sleep work.
+1. ~~Power?~~ Home USB power, permanently (2026-09-27): no battery or deep-sleep work.
 2. The Govee `.env` labels its secret key `temp_sb_26aug — revoke … when done`. M0 used it.
    If it gets revoked, both projects' host scripts need the replacement.
 

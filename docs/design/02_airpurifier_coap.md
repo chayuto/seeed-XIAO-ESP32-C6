@@ -106,7 +106,7 @@ wifi_sta (shared) ──► coap_min.c ──► philips_coap.c ──► main.c
 
 **Philips AC2220/10**, Wi-Fi module `AWS_Philips_AIR_Combo@86`, firmware 0.2.3, **new2** keys.
 IP and name are in `docs/private/devices.md`. A redacted status is committed as the test
-fixture `projects/02_airpurifier_coap/test/ac2220_status.json` (~2 KB of JSON, 2088 hex chars on the wire).
+fixture `components/philips_air/test/ac2220_status.json` (~2 KB of JSON, 2088 hex chars on the wire).
 
 Found by sending a CoAP sync to every address on the /24. The purifier ignores ping, and
 its MAC prefix isn't in the integration's DHCP list, so ARP and OUI matching both miss it.
@@ -157,6 +157,15 @@ What the probe taught, which the firmware must handle:
   the sub-millisecond remainder of its deadline, got 0, and blocked until the next
   datagram: a "16.7 s reply against a 12 s timeout". `wait_reply()` now rounds up and stops
   below 1 ms, and logs `recv overran` if a receive ever blocks longer than asked.
+- **Status can't be fetched on demand.** Quiet for 6+ minutes (PM2.5 steady), the purifier
+  pushed nothing to the XIAO or to the Mac's aioairctrl at the same time. A plain GET
+  without Observe went unanswered too (2 × 15 s). Sync still answered in ~100 ms. So
+  "purifier alive" has to be judged by sync, not by status; and after a reboot during a
+  quiet spell there's no state until the next push. The re-sync after three silent
+  re-registers is harmless but pointless when the purifier is just quiet. That time, the
+  quiet spell lasted ~12.5 minutes. The Observe sequence number jumped 41 → 96 across it,
+  although neither local client received anything: the purifier probably counts pushes
+  that go elsewhere (the Philips cloud?). Unexplained; watch it in 03.
 - Steady state on the XIAO: ~299 KB free heap (min ~294 KB), RSSI −53 to −62 dBm, no stray
   datagrams.
 

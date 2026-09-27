@@ -1,4 +1,5 @@
-// Host test for coap_min.c:  cc -I../main -o /tmp/t test_coap_min.c ../main/coap_min.c && /tmp/t
+// Host test for coap_min.c, from components/philips_air/:
+//   cc -Wall -Wextra -I include -o /tmp/t test/test_coap_min.c coap_min.c && /tmp/t
 #include <stdio.h>
 #include <string.h>
 #include "coap_min.h"
