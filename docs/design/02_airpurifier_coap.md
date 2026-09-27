@@ -4,7 +4,9 @@
 
 The XIAO joins the home Wi-Fi, talks directly to a Philips air purifier on the LAN, and
 logs its live status (PM2.5, allergen index, power, fan mode, filter life, …) as it
-changes. No cloud, no Home Assistant, no phone. Read-only first; control later.
+changes, then keeps a long-running record of it in Supabase (see "Cloud logging"). The
+purifier is read locally: no Philips cloud, no Home Assistant, no phone. Read-only;
+control later.
 
 Reference implementation: [kongo09/philips-airpurifier-coap](https://github.com/kongo09/philips-airpurifier-coap)
 (Home Assistant integration). The wire protocol itself lives in its dependency
@@ -165,9 +167,104 @@ What the probe taught, which the firmware must handle:
   re-registers is harmless but pointless when the purifier is just quiet. That time, the
   quiet spell lasted ~12.5 minutes. The Observe sequence number jumped 41 → 96 across it,
   although neither local client received anything: the purifier probably counts pushes
-  that go elsewhere (the Philips cloud?). Unexplained; watch it in 03.
+  that go elsewhere (the Philips cloud?). Unexplained; watch it once uploads run.
 - Steady state on the XIAO: ~299 KB free heap (min ~294 KB), RSSI −53 to −62 dBm, no stray
   datagrams.
+
+## Cloud logging (Supabase)
+
+Decided 2026-09-27: **one project does both** (the user's call). The upload is a feature
+of this project, not a separate `03_…`; there's no separate ingestion repo (the board POSTs
+straight to Supabase's REST API), and no separate Supabase project either.
+
+**Where the data lives.** The Govee humidity monitor's Supabase project
+(`ws-ESP32-C6-Touch-AMOLED-1.8/projects/18_govee_monitor`), with **no shared tables**: every
+object is prefixed `purifier_` and `supabase/schema.sql` touches nothing else. A separate
+project was the first choice, but both free-tier slots (two active projects per account)
+are in use. Cost: storage. Govee measured ~229 MB/year and the purifier adds ~35 MB/year,
+so the 500 MB free database fills in ~1.7 years instead of ~2.
+
+### The pattern being reused (from `ws-ESP32-C6-Touch-AMOLED-1.8/projects/18_govee_monitor`)
+
+- **Board → REST with the publishable key, INSERT-only by RLS.** The key is recoverable from
+  flash, so a leak can add junk rows but can't read or delete. `verify.sh` asserts the
+  negative cases.
+- **Deterministic UUIDv7 ids** from (bucket ms, device id, source id): a replayed upload is
+  the same row, so `409/23505` counts as success and retries are always safe. Plain insert,
+  never upsert (upsert needs SELECT).
+- 3-minute buckets in a RAM ring (6 h offline tolerance, accepted by design), SNTP for time,
+  `esp_http_client` + the cert bundle for TLS, a status row every 5 min.
+- Gotcha recorded there: Supabase grants `anon` on **every new object** in `public`, so each
+  new table or view needs an explicit revoke plus a `verify.sh` check.
+
+### Data (C0, applied 2026-09-27)
+
+`projects/02_airpurifier_coap/supabase/schema.sql`:
+
+**`purifier_reading`**: one row per purifier per 3-minute bucket (aligned with Govee's):
+`id` (UUIDv7 of bucket end, device_id, purifier_id), `ts`, `device_id` (the XIAO),
+`purifier_id` (the purifier's own DeviceId), `pm25_mean/min/max`, `iai_max`, `pwr`, `mode`,
+`fan`, `err` (last value in the bucket), `prefilter_h`, `hepa_h`, `dev_rssi`, `n_samples`.
+
+The purifier pushes **only on change**, unlike Govee sensors, which advertise on a schedule.
+An empty bucket therefore means "unchanged", not "missing". While the purifier is known to
+be alive, the device writes the bucket anyway, carrying the last values forward with
+`n_samples = 0`, and stops once it isn't. A gap in `ts` then means "XIAO or purifier
+offline", which is the question worth answering.
+
+**"Alive" is judged by sync, not by status** (found during the component refactor): the purifier can go 6+
+minutes without pushing, a plain GET isn't answered either, but `/sys/dev/sync` answers in
+~100 ms. So each quiet bucket is backed by a sync probe: answered → carry forward,
+unanswered → no row. No rows are written after boot until the first real status arrives,
+because there's nothing to carry forward.
+
+Buckets rather than every notification: pushes arrive in 1–2 s bursts while PM2.5 moves, so
+raw rows would be bursty and 10–50× the volume. `pm25_max` keeps the peak, which is what a
+cooking or dust event looks like.
+
+**`purifier_device_status`**: every 5 min. The XIAO's heap, uptime, Wi-Fi RSSI and drops,
+Observe/sync/update counters, `last_update_age_s`, rows_sent/upload_fail. Plus the purifier's
+own name, model and firmware, kept as a time series so a rename shows up as a change rather
+than rewriting history.
+
+**Access:** `anon` (the firmware key) has INSERT on both, nothing else. `authenticated` has
+nothing. The Govee dashboard's `dashboard_reader` role has nothing here; granting it a
+purifier view is a later decision, not a default. No views yet.
+
+### Code layout
+
+```
+components/philips_air/     the purifier client (coap_min, philips_crypto, philips_coap)
+components/cloud_upload/    to port from 18_govee_monitor: uploader (REST POST, 409 = ok),
+                            uuid7 (deterministic), net_time (SNTP)
+projects/02_airpurifier_coap/
+  main/                     Observe loop + bucketer + upload task
+  supabase/                 schema.sql, apply_schema.sh, verify.sh
+  .env (gitignored)         keys copied from 18_govee_monitor/.env (same Supabase project)
+```
+
+The publishable key and URL go in `sdkconfig.defaults.local` (gitignored); the secret key and
+`DATABASE_URL` only ever in `.env`.
+
+### Cloud milestones
+
+- **C0 — schema.** ✅ 2026-09-27. Dry-run in a rolled-back transaction, applied, re-applied
+  (idempotent), `verify.sh` all ok, and the Govee project's own `verify.sh` still passes.
+- **C1 — purifier client as a component.** ✅ 2026-09-27. `components/philips_air`; rebuilt
+  clean, host tests pass, vectors regenerate identically, on the board self-test ok and
+  statuses received.
+- **C2 — first upload.** SNTP + one bucket sent on a serial command; a replay proves 409 =
+  the same row.
+- **C3 — steady state.** Bucket every 3 min, status every 5 min, an hour of running, with a
+  Wi-Fi drop and a Supabase outage (bad URL) simulated to watch the ring catch up.
+- **Later** — a purifier view + dashboard panel, parquet archive like Govee's `sync.sh`.
+
+Power: the XIAO is on home USB permanently (2026-09-27), so no battery or deep-sleep work.
+
+The Govee `.env` labels its secret key `temp_sb_26aug — revoke … when done`; C0 used it. If
+it gets revoked, both projects' host scripts need the replacement. (Also noticed there:
+`18_govee_monitor/supabase/README.md` says rows are pruned after 90 days, but its
+`schema.sql` says no pruning until storage runs short. The README line is the stale one.)
 
 ## Open questions
 

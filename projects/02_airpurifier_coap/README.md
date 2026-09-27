@@ -6,6 +6,10 @@ off the LAN: no cloud, no app, no Home Assistant. It speaks the purifier's local
 [`aioairctrl`](https://pypi.org/project/aioairctrl/), the library behind
 [kongo09/philips-airpurifier-coap](https://github.com/kongo09/philips-airpurifier-coap).
 
+Readings are also being wired into **Supabase** (`supabase/`: schema, apply, verify),
+in the Govee monitor's project under `purifier_*` tables. The schema is live and verified;
+the firmware upload is next.
+
 Tested on an **AC2220/10**. Design, protocol notes and what the hardware taught:
 [`docs/design/02_airpurifier_coap.md`](../../docs/design/02_airpurifier_coap.md).
 
@@ -18,8 +22,8 @@ I (32949) main: hb up=32 heap=299464 heap_min=293784 rssi=-62 wifi_drops=0 updat
 ## Files
 
 The purifier client is the shared component
-[`components/philips_air`](../../components/philips_air/) (03 uses it too); this project is
-the loop and the log.
+[`components/philips_air`](../../components/philips_air/); this project is the loop, the
+log and (in progress) the Supabase upload.
 
 | File | What |
 |------|------|

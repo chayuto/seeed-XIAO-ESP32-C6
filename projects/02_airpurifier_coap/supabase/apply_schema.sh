@@ -1,6 +1,6 @@
 #!/bin/sh
 # Apply schema.sql (purifier_* objects only) to the shared Supabase project. Idempotent.
-# Needs DATABASE_URL (session pooler string) in projects/03_airpurifier_supabase/.env.
+# Needs DATABASE_URL (session pooler string) in projects/02_airpurifier_coap/.env.
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 [ -f "$DIR/../.env" ] && { set -a; . "$DIR/../.env"; set +a; }

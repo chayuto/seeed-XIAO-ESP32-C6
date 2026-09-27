@@ -24,7 +24,7 @@ its code.
 | # | Project | One-liner |
 |---|---|---|
 | 01 | [Bring-up](projects/01_bringup/) | Board census: chip, flash, LED, BOOT button, RF switch, Wi-Fi join |
-| 02 | [Air purifier CoAP](projects/02_airpurifier_coap/) | Stream a Philips air purifier's live status (PM2.5, mode, filters) over its local encrypted CoAP API |
+| 02 | [Air purifier CoAP](projects/02_airpurifier_coap/) | Stream a Philips air purifier's live status (PM2.5, mode, filters) over its local encrypted CoAP API, and log it to Supabase (in progress) |
 
 ## Build & flash
 

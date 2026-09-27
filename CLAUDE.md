@@ -129,5 +129,4 @@ committed files.
 | # | Project | Status |
 |---|---------|--------|
 | 01 | `01_bringup` | Done 2026-09-27: census, RF switch, Wi-Fi join (~1.6–6 s, −54…−61 dBm), heartbeat, `p` = deliberate panic for testing the debug path. LED polarity still needs a human |
-| 02 | `02_airpurifier_coap` | M1+M2 done 2026-09-27: Observe stream from a Philips AC2220 (PM2.5, mode, filters), crypto self-test vs aioairctrl. Off/on recovery test owed. Design + findings: `docs/design/02_airpurifier_coap.md` |
-| 03 | `03_airpurifier_supabase` | M0 done 2026-09-27: `purifier_*` tables in the Govee monitor's Supabase project (shared project, no shared tables), firmware key INSERT-only, verified. Firmware next. Design: `docs/design/03_airpurifier_supabase.md` |
+| 02 | `02_airpurifier_coap` | Reads a Philips AC2220 over local CoAP (Observe stream, crypto self-test vs aioairctrl) and will log it to Supabase: `purifier_*` tables in the Govee monitor's project (no shared tables), schema + security verified; firmware upload next. One project for both, by decision. Design: `docs/design/02_airpurifier_coap.md` |
