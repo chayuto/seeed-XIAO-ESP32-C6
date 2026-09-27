@@ -20,6 +20,12 @@ managed_components/
 # See CLAUDE.md "Credential pattern".
 projects/*/sdkconfig.defaults.local
 
+# Host-side secrets (Supabase secret key, DB password). Keep .env.template committed.
+.env
+**/.env
+.env.*
+!.env.template
+
 # Python
 __pycache__/
 *.pyc
