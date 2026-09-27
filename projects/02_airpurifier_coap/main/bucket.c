@@ -1,20 +1,22 @@
 #include "bucket.h"
-#include <stdio.h>
 #include <string.h>
-#include <time.h>
 #include "esp_log.h"
-#include "uuid7.h"
 
 static const char *TAG = "bucket";
 
 static purifier_state_t s_state;
 
-static struct {
-    int64_t end_ms; // 0 = no bucket open
+typedef struct {
+    int64_t end_ms; // 0 = empty
     int n;
     int pm25_min, pm25_max, iai_max;
     int64_t pm25_sum;
-} s_b;
+    int pm25_n;
+} acc_t;
+
+// The window being filled, and the one before it: a status can open the next window
+// before the main loop gets round to closing the previous one.
+static acc_t s_cur, s_prev;
 
 static int jint(const cJSON *o, const char *k)
 {
@@ -49,24 +51,27 @@ void bucket_on_status(const cJSON *r, int64_t epoch_ms)
     st->err = jint(r, "D03240");
     st->prefilter_h = jint(r, "D0520D");
     st->hepa_h = jint(r, "D0540E");
-    st->dev_rssi = jint(r, "rssi");
+    // rssi is negative, so -1 can't mean "missing" here; 0 does.
+    const cJSON *rs = cJSON_GetObjectItemCaseSensitive(r, "rssi");
+    st->dev_rssi = cJSON_IsNumber(rs) ? rs->valueint : 0;
     st->valid = st->purifier_id[0] != '\0';
     if (!st->valid) ESP_LOGW(TAG, "status without DeviceId - not bucketed");
     if (!st->valid || epoch_ms < 0) return;
 
     int64_t end = bucket_end_for(epoch_ms);
-    if (end != s_b.end_ms) {
-        if (s_b.end_ms) ESP_LOGD(TAG, "bucket closed end_ms=%lld n=%d", (long long)s_b.end_ms, s_b.n);
-        memset(&s_b, 0, sizeof(s_b));
-        s_b.end_ms = end;
+    if (end != s_cur.end_ms) {
+        if (s_cur.end_ms) s_prev = s_cur;
+        memset(&s_cur, 0, sizeof(s_cur));
+        s_cur.end_ms = end;
     }
     if (st->pm25 >= 0) {
-        if (s_b.n == 0 || st->pm25 < s_b.pm25_min) s_b.pm25_min = st->pm25;
-        if (s_b.n == 0 || st->pm25 > s_b.pm25_max) s_b.pm25_max = st->pm25;
-        s_b.pm25_sum += st->pm25;
+        if (s_cur.pm25_n == 0 || st->pm25 < s_cur.pm25_min) s_cur.pm25_min = st->pm25;
+        if (s_cur.pm25_n == 0 || st->pm25 > s_cur.pm25_max) s_cur.pm25_max = st->pm25;
+        s_cur.pm25_sum += st->pm25;
+        s_cur.pm25_n++;
     }
-    if (st->iai > s_b.iai_max) s_b.iai_max = st->iai;
-    s_b.n++;
+    if (st->iai > s_cur.iai_max) s_cur.iai_max = st->iai;
+    s_cur.n++;
 }
 
 const purifier_state_t *bucket_state(void)
@@ -74,50 +79,47 @@ const purifier_state_t *bucket_state(void)
     return &s_state;
 }
 
-// -1 (a key missing from this model's status) goes out as JSON null.
-static const char *num(char *buf, size_t cap, int v)
+static const acc_t *find(int64_t end_ms)
 {
-    if (v < 0) return "null";
-    snprintf(buf, cap, "%d", v);
-    return buf;
+    if (s_cur.end_ms == end_ms && s_cur.n) return &s_cur;
+    if (s_prev.end_ms == end_ms && s_prev.n) return &s_prev;
+    return NULL;
 }
 
-bool bucket_row_json(int64_t end_ms, const char *device_id, char *out, size_t cap, int *n_samples)
+int bucket_samples(int64_t end_ms)
+{
+    const acc_t *a = find(end_ms);
+    return a ? a->n : 0;
+}
+
+bool bucket_close(int64_t end_ms, bool carry_forward, reading_row_t *out)
 {
     const purifier_state_t *st = &s_state;
-    if (!st->valid) return false;
-    bool have = s_b.end_ms == end_ms && s_b.n > 0;
-    int n = have ? s_b.n : 0;
-    int pmin = have ? s_b.pm25_min : st->pm25;
-    int pmax = have ? s_b.pm25_max : st->pm25;
-    int iai = have ? s_b.iai_max : st->iai;
-    double mean = have ? (double)s_b.pm25_sum / s_b.n : st->pm25;
+    const acc_t *a = find(end_ms);
+    if (!st->valid || (!a && !carry_forward)) return false;
 
-    char id[UUID7_STR_LEN];
-    uuid7_deterministic(end_ms, device_id, st->purifier_id, strlen(st->purifier_id), id);
-    time_t secs = (time_t)(end_ms / 1000);
-    struct tm utc;
-    gmtime_r(&secs, &utc);
-    char ts[24];
-    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &utc);
-
-    char a[9][12];
-    char mean_s[16];
-    if (st->pm25 < 0 && !have) strcpy(mean_s, "null");
-    else snprintf(mean_s, sizeof(mean_s), "%.2f", mean);
-    int len = snprintf(out, cap,
-        "[{\"id\":\"%s\",\"ts\":\"%s\",\"device_id\":\"%s\",\"purifier_id\":\"%s\","
-        "\"pm25_mean\":%s,\"pm25_min\":%s,\"pm25_max\":%s,\"iai_max\":%s,"
-        "\"pwr\":%s,\"mode\":%s,\"fan\":%s,\"err\":%s,\"prefilter_h\":%s,\"hepa_h\":%s,"
-        "\"dev_rssi\":%d,\"n_samples\":%d}]",
-        id, ts, device_id, st->purifier_id, mean_s, num(a[0], 12, pmin), num(a[1], 12, pmax),
-        num(a[2], 12, iai), num(a[3], 12, st->pwr), num(a[4], 12, st->mode), num(a[5], 12, st->fan),
-        num(a[6], 12, st->err), num(a[7], 12, st->prefilter_h), num(a[8], 12, st->hepa_h),
-        st->dev_rssi, n);
-    if (len < 0 || (size_t)len >= cap) {
-        ESP_LOGE(TAG, "row json truncated need=%d cap=%u", len, (unsigned)cap);
-        return false;
+    memset(out, 0, sizeof(*out));
+    out->end_ms = end_ms;
+    strlcpy(out->purifier_id, st->purifier_id, sizeof(out->purifier_id));
+    // Last-known values: what the purifier was doing when the window closed.
+    out->pwr = st->pwr;
+    out->mode = st->mode;
+    out->fan = st->fan;
+    out->err = st->err;
+    out->prefilter_h = st->prefilter_h;
+    out->hepa_h = st->hepa_h;
+    out->dev_rssi = st->dev_rssi;
+    if (a && a->pm25_n) {
+        out->n_samples = a->n;
+        out->pm25_mean = (float)a->pm25_sum / a->pm25_n;
+        out->pm25_min = a->pm25_min;
+        out->pm25_max = a->pm25_max;
+        out->iai_max = a->iai_max;
+    } else {
+        out->n_samples = a ? a->n : 0;
+        out->pm25_mean = st->pm25 >= 0 ? (float)st->pm25 : -1.0f;
+        out->pm25_min = out->pm25_max = st->pm25;
+        out->iai_max = st->iai;
     }
-    if (n_samples) *n_samples = n;
     return true;
 }

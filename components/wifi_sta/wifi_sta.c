@@ -3,6 +3,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -17,6 +18,15 @@ static const char *TAG = "wifi_sta";
 static EventGroupHandle_t s_events;
 static volatile bool s_connected;
 static volatile uint32_t s_disconnects;
+static volatile bool s_suspended;
+static esp_timer_handle_t s_resume_timer;
+
+static void resume_cb(void *arg)
+{
+    s_suspended = false;
+    ESP_LOGW(TAG, "suspend over - rejoining");
+    esp_wifi_connect();
+}
 
 static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
@@ -27,8 +37,9 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         s_connected = false;
         s_disconnects++;
         xEventGroupClearBits(s_events, GOT_IP_BIT);
-        ESP_LOGW(TAG, "disconnected reason=%d count=%lu", d->reason, (unsigned long)s_disconnects);
-        esp_wifi_connect();
+        ESP_LOGW(TAG, "disconnected reason=%d count=%lu suspended=%d", d->reason,
+                 (unsigned long)s_disconnects, s_suspended);
+        if (!s_suspended) esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         const ip_event_got_ip_t *e = data;
         s_connected = true;
@@ -95,4 +106,17 @@ int wifi_sta_rssi(void)
 uint32_t wifi_sta_disconnects(void)
 {
     return s_disconnects;
+}
+
+void wifi_sta_suspend(uint32_t seconds)
+{
+    if (!s_resume_timer) {
+        const esp_timer_create_args_t a = {.callback = resume_cb, .name = "wifi_resume"};
+        ESP_ERROR_CHECK(esp_timer_create(&a, &s_resume_timer));
+    }
+    esp_timer_stop(s_resume_timer);
+    s_suspended = true;
+    ESP_LOGW(TAG, "suspend for %lu s (test)", (unsigned long)seconds);
+    esp_wifi_disconnect();
+    esp_timer_start_once(s_resume_timer, (uint64_t)seconds * 1000000);
 }

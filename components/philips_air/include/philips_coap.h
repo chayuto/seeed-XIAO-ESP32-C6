@@ -19,6 +19,13 @@ typedef struct {
 } philips_t;
 
 esp_err_t philips_open(philips_t *p, const char *host, uint16_t port);
+
+// Find a purifier on the local network by sending /sys/dev/sync to the subnet broadcast
+// address (3 tries), falling back to a batched unicast sweep of the /24, and taking the
+// first valid reply (8 hex chars). Purifiers ignore ping and their MAC prefixes aren't
+// predictable, so sync is the only reliable probe. Worst case ~15 s (feed watchdogs around
+// it). Writes the dotted IP into host_out.
+esp_err_t philips_discover(uint16_t port, uint32_t timeout_ms, char *host_out, size_t host_cap);
 void philips_close(philips_t *p);
 
 // POST /sys/dev/sync with a random nonce; stores the device's client key.

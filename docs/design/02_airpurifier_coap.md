@@ -246,6 +246,28 @@ projects/02_airpurifier_coap/
 The publishable key and URL go in `sdkconfig.defaults.local` (gitignored); the secret key and
 `DATABASE_URL` only ever in `.env`.
 
+### Recovery: either device can lose power at any time
+
+Requirement (2026-09-27): the XIAO and the purifier can each be switched off and on at any
+time; the process has to recover by itself. What each failure does:
+
+| Event | Behaviour |
+|---|---|
+| XIAO power loss / reboot | Boots straight into the loop; re-links, re-syncs the clock, resumes rows. Rows still in the RAM ring are lost (normally 0-1: the ring drains within seconds). Accepted. |
+| XIAO hangs | Main loop and uploader feed the task watchdog; 60 s without a feed → panic → reboot (core dump kept). |
+| Heap leak | Below 30 KB free → reboot before it becomes a crash. |
+| Purifier off | Syncs fail → `linked=0`; quiet windows get no row (a real gap). Sync retried every 10 s. |
+| Purifier back, same IP | Next sync answers → re-register → rows resume, carried forward while it's quiet. |
+| Purifier back, **new IP** | After 3 failed syncs, sweep the /24 with sync probes (at most every 5 min), move to the responder, save it in NVS so a reboot starts there. |
+| Wi-Fi down | Reconnects on its own; windows during the outage get no row; status rows wait in the ring. |
+| Supabase down | Rows wait in the ring (200 ≈ 6 h), one POST at a time, backoff 5 → 30 s; the oldest is dropped (and counted) only when full. |
+| No host configured | Discovery runs from the start. |
+
+Test hooks on the serial console: `x` (purifier "moves" to a dead IP), `h` (hang 70 s),
+`o` (10-min Supabase outage through the real HTTP path), `w` (Wi-Fi off 4 min), `r`.
+`supabase/stats.sh [hours]` reports rows, coverage against the 3-minute grid, gaps, reboots
+(uptime going backwards) and the lowest heap seen.
+
 ### Cloud milestones
 
 - **C0 — schema.** ✅ 2026-09-27. Dry-run in a rolled-back transaction, applied, re-applied
@@ -262,8 +284,24 @@ The publishable key and URL go in `sdkconfig.defaults.local` (gitignored); the s
   **Rule found on the way: upload closed buckets only.** A row's id is final the moment
   it's minted, so uploading a window that's still open would make the later full upload a
   409 and lose its stats. `u` breaks this on purpose, for testing only.
-- **C3 — steady state.** Bucket every 3 min, status every 5 min, an hour of running, with a
-  Wi-Fi drop and a Supabase outage (bad URL) simulated to watch the ring catch up.
+- **C3 — steady state + recovery.** In progress (2026-09-27). The board uploads by itself: a
+  reading per closed 3-minute window, a status row every 5 minutes, through a 200-row RAM
+  ring (`main/uploader.c`). Verified on the board so far:
+  - 10-minute Supabase outage (`o`, real HTTP 404s): 5 rows held, backoff capped at 30 s,
+    all drained within 30 s of the end, nothing dropped.
+  - 4-minute Wi-Fi drop (`w`): the window closed during it was queued; uploaded 4 s after
+    rejoining.
+  - Purifier "moved" (`x`): the first discovery (253-address unicast burst) found nothing,
+    5 sweeps in a row, because lwIP's 10-entry ARP table drops the burst. Replaced by a
+    broadcast sync (the AC2220 answers it; multicast doesn't) with a batched sweep as the
+    fallback: found in 268 ms, saved to NVS, and a reboot started from the saved IP.
+  - Hang (`h`): the task watchdog fired at 59.3 s, rebooted (`reset=6`) with a core dump,
+    and the board relinked by itself. **Open:** in one earlier run the same hang did NOT
+    trip the watchdog; not reproduced since, being retested.
+  - `stats.sh` after ~70 minutes: 15 readings, 15 status rows, one 9-window gap (the broken
+    discovery run above), none since the fix.
+  Still owed: real power cycles by a person, the XIAO unplugged and the purifier switched
+  off at the wall, then `stats.sh` after a longer run.
 - **Later** — a purifier view + dashboard panel, parquet archive like Govee's `sync.sh`.
 
 Power: the XIAO is on home USB permanently (2026-09-27), so no battery or deep-sleep work.

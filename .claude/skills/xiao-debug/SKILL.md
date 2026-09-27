@@ -71,6 +71,10 @@ but nobody should have to replug it for us.
   whole ms and stop below 1 ms, or a "timed" recv hangs until the next datagram.
 - **UDP datagrams over ~1.5 KB need `CONFIG_LWIP_IP4_REASSEMBLY=y`** (off by default);
   without it fragmented replies vanish with no error.
+- **An out-of-range Kconfig value in `sdkconfig.defaults` is silently replaced by the
+  default.** `CONFIG_ESP_TASK_WDT_TIMEOUT_S=90` (range 1-60) became 5, which would have
+  rebooted the board on every 12 s network wait. After changing a numeric option, grep the
+  generated `/tmp/xiao-c6-build/<p>/sdkconfig` to confirm it took.
 - **Wi-Fi blob warnings** at start (`ACK_TAB0`, `CTS_TAB0`, `(agc)`, `(trc)`, `<ba-add>`) are
   normal. Anything else at `W`/`E` deserves a look.
 

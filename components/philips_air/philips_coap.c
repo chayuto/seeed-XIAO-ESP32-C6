@@ -3,8 +3,11 @@
 #include <sys/time.h>
 #include "coap_min.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "esp_random.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
 #include "philips_crypto.h"
@@ -166,4 +169,81 @@ esp_err_t philips_recv_status(philips_t *p, char *json, size_t json_cap, uint32_
              (unsigned)reply.payload_len, (unsigned)len, reply.has_observe ? "" : "none/",
              (unsigned long)p->last_observe, (unsigned long)p->max_age, (unsigned long)p->since_observe_ms);
     return ESP_OK;
+}
+
+// Wait up to timeout_ms for a sync reply with our token on socket s.
+static esp_err_t discover_wait(int s, const uint8_t tok[4], uint32_t timeout_ms, char *host_out, size_t host_cap)
+{
+    int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
+    for (;;) {
+        int64_t left_ms = (deadline - esp_timer_get_time() + 999) / 1000;
+        if (left_ms < 1) return ESP_ERR_NOT_FOUND;
+        struct timeval tv = {.tv_sec = left_ms / 1000, .tv_usec = (left_ms % 1000) * 1000};
+        setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        struct sockaddr_in from;
+        socklen_t fl = sizeof(from);
+        int r = recvfrom(s, s_rx, sizeof(s_rx), 0, (struct sockaddr *)&from, &fl);
+        if (r < 0) continue; // EAGAIN: loop re-checks the deadline
+        coap_msg_t m;
+        if (!coap_parse(s_rx, (size_t)r, &m) || m.tkl != 4 || memcmp(m.token, tok, 4) != 0 ||
+            COAP_CODE_CLASS(m.code) != 2 || m.payload_len != 8) {
+            continue;
+        }
+        inet_ntop(AF_INET, &from.sin_addr, host_out, host_cap);
+        return ESP_OK;
+    }
+}
+
+esp_err_t philips_discover(uint16_t port, uint32_t timeout_ms, char *host_out, size_t host_cap)
+{
+    esp_netif_t *nif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_ip_info_t ip;
+    if (!nif || esp_netif_get_ip_info(nif, &ip) != ESP_OK || ip.ip.addr == 0) return ESP_ERR_INVALID_STATE;
+    uint32_t self = ntohl(ip.ip.addr), mask = ntohl(ip.netmask.addr);
+
+    int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (s < 0) return ESP_FAIL;
+    int on = 1;
+    setsockopt(s, SOL_SOCKET, SO_BROADCAST, &on, sizeof(on));
+    uint8_t tx[64], tok[4];
+    uint32_t t = esp_random();
+    memcpy(tok, &t, sizeof(tok));
+    char nonce[9];
+    snprintf(nonce, sizeof(nonce), "%08lX", (unsigned long)esp_random());
+    size_t n = coap_build(tx, sizeof(tx), COAP_TYPE_NON, COAP_POST, (uint16_t)esp_random(), tok, sizeof(tok),
+                          "/sys/dev/sync", COAP_NO_OBSERVE, (const uint8_t *)nonce, 8);
+    int64_t t0 = esp_timer_get_time();
+    const char *how = "broadcast";
+    esp_err_t result = ESP_ERR_NOT_FOUND;
+
+    // 1) Subnet broadcast: one packet, no ARP. The AC2220 answers it (3/3 from the Mac,
+    //    2026-09-27); multicast 224.0.1.187 got nothing.
+    struct sockaddr_in bc = {.sin_family = AF_INET, .sin_port = htons(port),
+                             .sin_addr.s_addr = htonl((self & mask) | ~mask)};
+    for (int i = 0; i < 3 && result != ESP_OK; i++) {
+        sendto(s, tx, n, 0, (struct sockaddr *)&bc, sizeof(bc));
+        result = discover_wait(s, tok, 1000, host_out, host_cap);
+    }
+
+    // 2) Fallback: unicast sweep of the /24 in batches of 8. A burst to all 253 addresses
+    //    failed on the XIAO: lwIP's ARP table (10 entries) can't hold that many pending
+    //    lookups, so the packets were dropped before leaving (2026-09-27, 5 sweeps, 0 replies).
+    if (result != ESP_OK) {
+        how = "sweep";
+        uint32_t net = self & 0xffffff00;
+        for (uint32_t h = 1; h < 255 && result != ESP_OK; h += 8) {
+            for (uint32_t k = h; k < h + 8 && k < 255; k++) {
+                uint32_t a = net | k;
+                if (a == self) continue;
+                struct sockaddr_in to = {.sin_family = AF_INET, .sin_port = htons(port), .sin_addr.s_addr = htonl(a)};
+                sendto(s, tx, n, 0, (struct sockaddr *)&to, sizeof(to));
+            }
+            result = discover_wait(s, tok, 300, host_out, host_cap);
+        }
+        if (result != ESP_OK) result = discover_wait(s, tok, timeout_ms, host_out, host_cap);
+    }
+    close(s);
+    ESP_LOGI(TAG, "discover via=%s result=%s host=%s ms=%lld", how, esp_err_to_name(result),
+             result == ESP_OK ? host_out : "-", (long long)((esp_timer_get_time() - t0) / 1000));
+    return result;
 }

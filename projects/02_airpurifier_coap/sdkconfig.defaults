@@ -14,9 +14,18 @@ CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
 # The status reply is one ~2.1 KB UDP datagram, IP-fragmented on the way in.
 CONFIG_LWIP_IP4_REASSEMBLY=y
 
-# The Supabase POST (TLS) runs on the main task; mbedTLS's handshake overflows the
-# 3.5 KB default.
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+# Uploads (TLS) run in their own 8 KB task (uploader.c). Main keeps some headroom for
+# cJSON and the logs; 3.5 KB was never measured against this loop.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+
+# Recovery: the main loop and the uploader feed the task watchdog; 60 s without a feed
+# means a hang, and the panic reboots the board (core dump kept for coredump.sh).
+# 60 is the Kconfig maximum: 90 was silently replaced by the default 5, which would have
+# rebooted the board on the first 12 s sync.
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=60
 
 # agentic-logging
 CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y

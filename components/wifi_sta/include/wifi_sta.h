@@ -12,3 +12,7 @@ esp_err_t wifi_sta_start(uint32_t timeout_ms);
 bool wifi_sta_connected(void);
 int wifi_sta_rssi(void);             // dBm, or 0 when not associated
 uint32_t wifi_sta_disconnects(void); // since boot
+
+// Test hook: drop the association and stay off for `seconds`, then rejoin on its own.
+// Exercises everything downstream of a real Wi-Fi outage without touching the router.
+void wifi_sta_suspend(uint32_t seconds);

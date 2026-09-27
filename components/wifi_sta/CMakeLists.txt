@@ -1,4 +1,4 @@
 idf_component_register(SRCS "wifi_sta.c"
                        INCLUDE_DIRS "include"
-                       REQUIRES esp_wifi esp_netif esp_event nvs_flash
+                       REQUIRES esp_wifi esp_netif esp_event nvs_flash esp_timer
                        PRIV_REQUIRES xiao_board)
