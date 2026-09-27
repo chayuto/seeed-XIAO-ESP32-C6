@@ -298,14 +298,27 @@ Test hooks on the serial console: `x` (purifier "moves" to a dead IP), `h` (hang
     broadcast sync (the AC2220 answers it; multicast doesn't) with a batched sweep as the
     fallback: found in 268 ms, saved to NVS, and a reboot started from the saved IP.
   - Hang (`h`): the task watchdog fired at 59.3 s, rebooted (`reset=6`) with a core dump,
-    and the board relinked by itself. **Open:** in one earlier run the same hang did NOT
-    trip the watchdog; not reproduced since, being retested.
+    and the board relinked by itself. **Open:** in clean retests it fired in only 1 of 4
+    hangs. GDB caught main's watchdog entry being marked fed during a hang (the timing of
+    the hits is uncertain); cause not found.
   - `stats.sh` after ~70 minutes: 15 readings, 15 status rows, one 9-window gap (the broken
     discovery run above), none since the fix.
-  Still owed: real power cycles by a person, the XIAO unplugged and the purifier switched
-  off at the wall, then `stats.sh` after a longer run; and the watchdog bug above. Until
-  that's fixed, a hang may not self-recover: if `stats.sh` shows rows stopping while the
-  purifier is on, unplug and replug the XIAO.
+  - Overnight, left alone from the 17:31 boot on 2026-09-27: 14.8 h of unbroken uptime,
+    297 readings in a row with no gap (77 carried forward, 1,599 notifications, all of
+    them in a reading), 178 status rows, 0 failed uploads, 0 Wi-Fi drops, free heap never
+    below 205 KB, RSSI −64 to −46 dBm. The purifier was in auto for 97 windows, sleep for 199.
+  - Real power cut, 2026-09-28: the XIAO was taken off the Mac at about 08:23 and powered
+    from another USB supply (no battery, so it lost power). It booted at 08:23:34, the
+    purifier answered sync within 86 s, and the first reading landed at 08:33 with no help.
+    Cost: 3 windows. The wait was the purifier's. It had been pushing every ~35 s to the old
+    subscription right up to the cut, then sent the new one nothing for 6.5–9.4 min, and about one push
+    per window after that. The three afternoon reboots (reflashes, auto mode) each had a
+    sample within 1.4 min. Every boot gets a new random UDP port (lwIP seeds it from
+    `esp_random`) and a new token, so the new subscription can't be mistaken for the old one.
+    See Open questions.
+  Still owed: the purifier switched off at the wall (needs a person at the purifier), and
+  the watchdog bug above. Until that's fixed, a hang may not self-recover: if `stats.sh`
+  shows rows stopping while the purifier is on, unplug and replug the XIAO.
 - **Later** — a purifier view + dashboard panel, parquet archive like Govee's `sync.sh`.
 
 Power: the XIAO is on home USB permanently (2026-09-27), so no battery or deep-sleep work.
@@ -319,5 +332,8 @@ it gets revoked, both projects' host scripts need the replacement. (Also noticed
 
 - Does the XIAO notice when the purifier is switched off at the wall, and recover when
   it comes back? (M2's remaining test, needs a person at the purifier.)
-- Discovery in firmware: send the sync probe across the /24 when the configured IP stops
-  answering (DHCP moved it once already).
+- Why did the purifier take 6.5–9.4 min to push to a new subscription after the power cut,
+  when reflash reboots got a push within 1.4 min? Two candidates: sleep mode (pushes are
+  bursty; 26% of overnight windows had none), or the dead subscription holding a slot
+  until it times out. To check, watch `n_samples` per window after the next power cut,
+  and whether the per-window rate recovers.
