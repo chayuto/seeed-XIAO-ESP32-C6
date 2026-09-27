@@ -286,7 +286,7 @@ Test hooks on the serial console: `x` (purifier "moves" to a dead IP), `h` (hang
   **Rule found on the way: upload closed buckets only.** A row's id is final the moment
   it's minted, so uploading a window that's still open would make the later full upload a
   409 and lose its stats. `u` breaks this on purpose, for testing only.
-- **C3 — steady state + recovery.** In progress (2026-09-27). The board uploads by itself: a
+- **C3 — steady state + recovery.** Parked 2026-09-27 at 18:18 AEST: the board is left running and collecting (34 readings, no gaps after the tests, 43 min of unbroken uptime at parking). The board uploads by itself: a
   reading per closed 3-minute window, a status row every 5 minutes, through a 200-row RAM
   ring (`main/uploader.c`). Verified on the board so far:
   - 10-minute Supabase outage (`o`, real HTTP 404s): 5 rows held, backoff capped at 30 s,
@@ -303,7 +303,9 @@ Test hooks on the serial console: `x` (purifier "moves" to a dead IP), `h` (hang
   - `stats.sh` after ~70 minutes: 15 readings, 15 status rows, one 9-window gap (the broken
     discovery run above), none since the fix.
   Still owed: real power cycles by a person, the XIAO unplugged and the purifier switched
-  off at the wall, then `stats.sh` after a longer run.
+  off at the wall, then `stats.sh` after a longer run; and the watchdog bug above. Until
+  that's fixed, a hang may not self-recover: if `stats.sh` shows rows stopping while the
+  purifier is on, unplug and replug the XIAO.
 - **Later** — a purifier view + dashboard panel, parquet archive like Govee's `sync.sh`.
 
 Power: the XIAO is on home USB permanently (2026-09-27), so no battery or deep-sleep work.
