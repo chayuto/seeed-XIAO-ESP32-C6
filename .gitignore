@@ -1,0 +1,39 @@
+# Vendor reference material — datasheets, schematics, wiki snapshots, vendor clones.
+/ref/
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+
+# ESP-IDF build artifacts (builds normally go to /tmp/xiao-c6-build/<name>)
+build/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+managed_components/
+
+# Credential overlay. `sdkconfig.defaults` is committed (no secrets);
+# real Wi-Fi creds and device IPs go in this overlay, which is never committed.
+# See CLAUDE.md "Credential pattern".
+projects/*/sdkconfig.defaults.local
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Claude Code runtime state
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Private notes: household context, device inventory, drafts
+docs/private/
+docs/internal/
+
+# Device logs and captures
+logs/
+projects/*/logs/
