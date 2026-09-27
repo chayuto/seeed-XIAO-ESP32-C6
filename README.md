@@ -31,12 +31,14 @@ its code.
 Requires [ESP-IDF v5.5](https://docs.espressif.com/projects/esp-idf/en/stable/esp32c6/get-started/).
 
 ```zsh
-. ~/esp/esp-idf/export.sh
-idf.py -C projects/01_bringup -B /tmp/xiao-c6-build/01_bringup set-target esp32c6
-idf.py -C projects/01_bringup -B /tmp/xiao-c6-build/01_bringup \
-  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.local" build
-.claude/skills/flash/scripts/flash.sh 01_bringup
+.claude/skills/xiao-debug/scripts/build.sh 01_bringup
+.claude/skills/xiao-debug/scripts/flash.sh 01_bringup
+.claude/skills/xiao-debug/scripts/attach.sh 20     # read the console without resetting
 ```
+
+The same folder has live GDB over the C6's built-in USB-JTAG (`gdb.sh`), panic decoding
+(`decode.sh`) and core-dump readout (`coredump.sh`); see its
+[SKILL.md](.claude/skills/xiao-debug/SKILL.md).
 
 Wi-Fi credentials go in `projects/<name>/sdkconfig.defaults.local` (gitignored):
 

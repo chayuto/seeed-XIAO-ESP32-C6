@@ -13,7 +13,7 @@ seeed-XIAO-ESP32-C6/
 ├── docs/design/         # One design doc per non-trivial project, written before code
 ├── docs/private/        # Gitignored: household context, device IPs/models, drafts
 ├── ref/                 # Gitignored: vendor datasheets, schematics, wiki snapshots
-├── .claude/skills/      # flash, serial-capture, agentic-logging
+├── .claude/skills/      # xiao-debug (build/flash/console/GDB/core dump), agentic-logging
 └── .githooks/           # commit-msg + pre-push: the no-attribution rule, enforced
 ```
 
@@ -23,8 +23,9 @@ Bought as a 3-pack from Core Electronics. Facts below are from the Seeed wiki
 (`wiki.seeedstudio.com/xiao_esp32c6_getting_started`); items marked *verify* have not yet
 been confirmed on the unit in hand.
 
-- **Chip:** ESP32-C6 — RISC-V HP core 160 MHz + LP core 20 MHz, 512 KB SRAM
-- **Flash:** 4 MB, no PSRAM. The default single-app partition table leaves ~1 MB for the app.
+- **Chip:** ESP32-C6FH4 (rev v0.2 on our units) — RISC-V HP core 160 MHz + LP core 20 MHz, 512 KB SRAM
+- **Flash:** 4 MB in-package, no PSRAM. The IDF default table gives the app 1 MB; `01_bringup`'s
+  `partitions.csv` gives 3 MB plus a 64 KB core dump slot — copy it for new projects.
 - **IDF target:** `esp32c6` — always set it; the default (esp32, Xtensa) will fail.
 - **Radio:** Wi-Fi 6 (2.4 GHz only), BLE 5, 802.15.4 (Thread / Zigbee)
 - **Console:** native USB-Serial-JTAG → `/dev/cu.usbmodem*` (was `usbmodem3101` on 2026-09-27)
@@ -71,35 +72,29 @@ them at boot.
   the system python has neither)
 
 ```zsh
-. ~/esp/esp-idf/export.sh
-idf.py -C projects/<name> -B /tmp/xiao-c6-build/<name> set-target esp32c6   # once
-idf.py -C projects/<name> -B /tmp/xiao-c6-build/<name> \
-  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.local" build
-.claude/skills/flash/scripts/flash.sh <name>
-sleep 3; .claude/skills/serial-capture/scripts/attach.sh 20
+S=.claude/skills/xiao-debug/scripts
+$S/build.sh <name>            # out of tree in /tmp/xiao-c6-build/<name>, sdkconfig there too
+$S/flash.sh <name>            # one reset at the end
+sleep 3; $S/attach.sh 20      # console without resetting
 ```
 
-Build out of tree in `/tmp/xiao-c6-build/<name>` so the repo stays clean. `flash.sh` refuses a
-binary older than the newest source.
+**Use the `xiao-debug` skill for anything touching the board**: its SKILL.md has the
+reset budget, live GDB, panic decoding and core dumps, all verified on this unit. Short
+version:
 
-If you change `sdkconfig.defaults` on a project that has already been built, **delete the
-generated `sdkconfig`** in the build dir first, or the change is silently ignored.
-
-### Serial
-
-- Never `idf.py monitor` (needs a TTY) and never `idf.py flash monitor`.
-- Default to `attach.sh`: it doesn't reset the board. Use `capture.py` (resets) only for the
-  boot banner, once, never within ten seconds of another reset.
-- These rules come from the S3 sibling, which wedged after back-to-back host resets. The
-  XIAO has no PMIC keeping it alive, so a USB replug does recover it — but the user
-  shouldn't have to do that either.
+- Never `idf.py monitor` (needs a TTY) or `idf.py flash monitor`.
+- `idf.py` writes `sdkconfig` into the project dir, where a stale copy silently beats
+  `sdkconfig.defaults`. `build.sh` keeps it in the build dir; after editing defaults, run
+  `build.sh <name> clean`.
+- One host-driven reset at a time. `attach.sh`, `send.sh` and `gdb.sh` don't reset;
+  `flash.sh`, `capture.py` and `coredump.sh` do.
+- The C6 can't do esptool's watchdog reset; `flash.sh` uses hard_reset.
 
 ## Credential pattern
 
 `sdkconfig.defaults` is committed and holds no secrets. Wi-Fi credentials, device IPs and
 anything else about the home network go in `projects/<name>/sdkconfig.defaults.local`
-(gitignored) and are layered in at build time with the `-D SDKCONFIG_DEFAULTS=...` shown
-above. Shared keys: `CONFIG_XIAO_WIFI_SSID`, `CONFIG_XIAO_WIFI_PASSWORD` (declared in
+(gitignored) and are layered in by `build.sh` when present. Shared keys: `CONFIG_XIAO_WIFI_SSID`, `CONFIG_XIAO_WIFI_PASSWORD` (declared in
 `components/wifi_sta/Kconfig`).
 
 ## Conventions
@@ -133,5 +128,5 @@ committed files.
 
 | # | Project | Status |
 |---|---------|--------|
-| 01 | `01_bringup` | Board census: chip, flash, LED, BOOT, RF switch, Wi-Fi join + RSSI |
+| 01 | `01_bringup` | Done 2026-09-27: census, RF switch, Wi-Fi join (~1.6–6 s, −54…−61 dBm), heartbeat, `p` = deliberate panic for testing the debug path. LED polarity still needs a human |
 | 02 | `02_airpurifier_coap` | Read a Philips air purifier's status over encrypted CoAP — design in `docs/design/02_airpurifier_coap.md` |

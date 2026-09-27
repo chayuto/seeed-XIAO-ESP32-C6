@@ -1,0 +1,10 @@
+menu "XIAO ESP32-C6 board"
+
+config XIAO_ANTENNA_EXTERNAL
+    bool "Use the u.FL external antenna"
+    default n
+    help
+        Drives GPIO14 high to route the radio to the u.FL connector.
+        Leave off for the on-board ceramic antenna.
+
+endmenu

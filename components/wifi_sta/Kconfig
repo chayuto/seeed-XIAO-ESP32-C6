@@ -1,0 +1,13 @@
+menu "Wi-Fi station"
+
+config XIAO_WIFI_SSID
+    string "SSID"
+    default ""
+    help
+        Set in sdkconfig.defaults.local (gitignored), never in sdkconfig.defaults.
+
+config XIAO_WIFI_PASSWORD
+    string "Password"
+    default ""
+
+endmenu

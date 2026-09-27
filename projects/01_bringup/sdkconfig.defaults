@@ -1,0 +1,19 @@
+# 01_bringup — XIAO ESP32-C6 board census. No secrets here: Wi-Fi creds go in
+# sdkconfig.defaults.local (gitignored).
+CONFIG_IDF_TARGET="esp32c6"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# agentic-logging
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_COLORS=n
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
+
+# 3 MB app + core dump slot (partitions.csv)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Core dump to flash, ELF format: read back with .claude/skills/xiao-debug/scripts/coredump.sh
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y

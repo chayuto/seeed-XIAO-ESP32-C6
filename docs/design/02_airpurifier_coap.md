@@ -95,8 +95,42 @@ wifi_sta (shared) ──► coap_min.c ──► philips_coap.c ──► main.c
 - **Later (not planned):** control (`pwr`, mode), several purifiers, push to a sink (MQTT or Supabase like
   the C6-AMOLED Govee monitor), deep sleep between reads on battery.
 
+## The unit in the house (M0, verified 2026-09-27)
+
+**Philips AC2220/10**, Wi-Fi module `AWS_Philips_AIR_Combo@86`, firmware 0.2.3, **new2** keys.
+IP and name are in `docs/private/devices.md`. A redacted status is committed as the test
+fixture `projects/02_airpurifier_coap/test/ac2220_status.json` (~2 KB of JSON, 2088 hex chars on the wire).
+
+Found by sending a CoAP sync to every address on the /24. The purifier ignores ping, and
+its MAC prefix isn't in the integration's DHCP list, so ARP and OUI matching both miss it.
+The sync probe is the reliable discovery method.
+
+Fields for the AC22xx family (from `PhilipsAC22xx` in the integration):
+
+| Key | Meaning | Values seen |
+|-----|---------|-------------|
+| `D03102` | power | 1 = on |
+| `D0310C` | mode | 0 auto, 1–5 speed, 17 sleep, 18 turbo, 19 medium |
+| `D0310D` | fan speed (read-only) | 1 |
+| `D03221` | PM2.5 µg/m³ | 3 → 43 over a few minutes |
+| `D03120` | indoor allergen index | 1 |
+| `D0520D` / `D05207` | pre-filter hours left / total | 719 / 720 |
+| `D0540E` / `D05408` | HEPA hours left / total | 19200 / 19200 |
+| `D03240` | error code | 0 |
+| `D01S05` | model id | `AC2220/10` |
+| `rssi`, `Runtime`, `free_memory` | device's own Wi-Fi RSSI, uptime (ms), heap | −64, … |
+
+What the probe taught, which the firmware must handle:
+
+- **Status latency varies from 0.2 to 7 s** after a GET (3 runs back to back: 7.0 s, 0.2 s, 5.9 s).
+  A 3 s timeout failed every time; use ≥10 s. Even `aioairctrl` timed out once.
+- **Parse CoAP properly.** A naive split on the first `0xFF` broke when the random message
+  ID contained `0xFF`. Walk the options to find the payload marker.
+- Use a fresh random message ID per request; replies echo the MID and the token, and
+  are matched on the token.
+- The 2 KB payload arrives as one fragmented UDP datagram; the receive buffer needs ≥2.5 KB.
+
 ## Open questions
 
-- Purifier model and IP (goes in `docs/private/` and the `.local` overlay, not here).
 - Does the unit accept a second concurrent client alongside the Philips app? aioairctrl
   users report the app and HA coexisting, but this needs to be seen on our unit.

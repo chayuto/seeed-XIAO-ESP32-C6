@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Read the board's console WITHOUT resetting it.
 #
-#   .claude/skills/serial-capture/scripts/attach.sh [seconds] [outfile] [port]
+#   .claude/skills/xiao-debug/scripts/attach.sh [seconds] [outfile] [port]
 #
 # Opens the port below the modem-control layer (dd, with -hupcl so the close
 # does not reset either). You see only what the board prints while attached:
@@ -12,7 +12,7 @@
 set -u
 SECS=${1:-15}
 OUT=${2:-/tmp/attach.log}
-PORT=${3:-/dev/cu.usbmodem3101}
+PORT=${3:-$($(dirname "$0")/port.sh)}
 [ -e "$PORT" ] || { echo "no port $PORT" >&2; exit 2; }
 stty -f "$PORT" 115200 -hupcl 2>/dev/null
 rm -f "$OUT"
