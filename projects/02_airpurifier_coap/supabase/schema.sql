@@ -8,8 +8,11 @@
 -- active projects per account) are already in use. Govee's device_status is not reused
 -- either (different columns, different owner).
 --
--- Storage: ~480 rows/day on 3-minute buckets, ~35 MB/year. With Govee's ~229 MB/year the
--- shared 500 MB free database lasts ~1.7 years instead of ~2.
+-- Storage, measured 2026-09-27: 136 B per reading row and 173 B per status row before
+-- indexes. 480 readings + 288 status rows a day with their indexes come to ~75 MB/year
+-- (an earlier estimate here said ~35: it counted readings only, without indexes). The
+-- database was 31.8 MB then; with Govee's own ~229 MB/year estimate the shared 500 MB
+-- free database lasts ~1.5 years.
 --
 -- Security model copied from the Govee schema, and verify.sh checks it: the
 -- publishable key is compiled into the firmware and recoverable from flash, so it can

@@ -181,8 +181,10 @@ straight to Supabase's REST API), and no separate Supabase project either.
 (`ws-ESP32-C6-Touch-AMOLED-1.8/projects/18_govee_monitor`), with **no shared tables**: every
 object is prefixed `purifier_` and `supabase/schema.sql` touches nothing else. A separate
 project was the first choice, but both free-tier slots (two active projects per account)
-are in use. Cost: storage. Govee measured ~229 MB/year and the purifier adds ~35 MB/year,
-so the 500 MB free database fills in ~1.7 years instead of ~2.
+are in use. Cost: storage. Govee estimates ~229 MB/year. The purifier adds ~75 MB/year,
+measured 2026-09-27 (136 B per reading row, 173 B per status row, plus indexes; the first
+estimate of ~35 MB counted readings only). At 31.8 MB used then, the shared 500 MB free
+database lasts ~1.5 years.
 
 ### The pattern being reused (from `ws-ESP32-C6-Touch-AMOLED-1.8/projects/18_govee_monitor`)
 
