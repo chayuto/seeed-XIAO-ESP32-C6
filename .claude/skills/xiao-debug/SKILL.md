@@ -22,6 +22,10 @@ Everything below was run on the unit in hand on 2026-09-27 (ESP32-C6FH4 rev v0.2
 | Decode a panic from a log | `scripts/decode.sh <project> [log]` | no |
 | Full crash post-mortem | `scripts/coredump.sh <project>` | **yes, once** |
 
+**Check for a long capture first.** `projects/03_csi_presence/tools/rec.sh status`: while it
+runs it holds the port, and a second reader (attach.sh, flash.sh) splits the bytes with it.
+`rec.sh stop` before touching the board, `rec.sh start` after.
+
 `python` = `~/.espressif/python_env/idf5.5_py3.14_env/bin/python` (system python has no
 pyserial or esptool). Builds live in `/tmp/xiao-c6-build/<project>/`.
 

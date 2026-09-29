@@ -114,16 +114,28 @@ lets the Mac check its own scoring against the board's.
 
 ```zsh
 PY=~/.espressif/python_env/idf5.5_py3.14_env/bin/python
-$PY tools/csi_rec.py /tmp/walk.rec --raw --seconds 600   # no reset; raw on, then off again
+tools/rec.sh start                                        # long capture, detached; stop | status
+$PY tools/csi_motion.py logs/csi-*.rec --map --hours 6    # text map of the last 6 h
+$PY tools/csi_rec.py /tmp/walk.rec --raw --seconds 600    # a short raw capture instead
 echo "$(date +%s) # empty" >> /tmp/walk.rec                # label from anywhere, any time
 $PY tools/csi_motion.py /tmp/walk.rec --trim 5            # per label: median, p90, max
 ```
 
-`csi_rec.py` opens the port like `attach.sh` (pyserial would reset the board) and stamps
-every line with the Mac's clock. `csi_motion.py` recomputes the firmware's score from the
-I/Q (standard library only) and prints it next to the board's own `m` lines; on the first
-30 s recording they agreed (median 24.7 vs 25.0, p90 116 vs 119). `--window` tries other
-window lengths.
+`csi_rec.py` opens the port like `attach.sh` (pyserial would reset the board), stamps
+every line with the Mac's clock, and carries on through the port going away (unplug, Mac
+sleep) and the board rebooting (it turns the dump back on). With `--bands` it keeps the
+~170 MB/h raw stream out of the file and writes one line a second instead: the
+fluctuation (std/mean x1000) of each of 16 slices of the channel, computed on the Mac from
+the raw I/Q, about 17 MB a day.
+
+`tools/rec.sh` runs that detached, one file a day in `logs/`, which is gitignored: a
+presence log is a record of when people are home. It holds `caffeinate -i` so the Mac
+doesn't idle-sleep; a closed lid still pauses it. **It holds the port: `rec.sh stop` before
+`flash.sh` or `attach.sh`**, `rec.sh start` after.
+
+`csi_motion.py` recomputes the firmware's score from the I/Q (standard library only); on
+the first 30 s recording it agreed with the board (median 24.7 vs 25.0, p90 116 vs 119).
+`--map` draws any span as text, one column per time bin, a row per slice of the channel.
 
 ## Milestones
 
@@ -135,8 +147,8 @@ window lengths.
 | M4 | Record | Raw dumps captured on the Mac (`tools/`), labelled, to tune the window and threshold |
 | M5 | Later | Supabase rows like 02; breathing band (0.1–0.5 Hz) for still presence; second XIAO as TX |
 
-M1 done 2026-09-29 (~61 frames/s, `dropped=0`, see the measured facts above). M4's tools
-are in `tools/`; no labelled recording yet.
+M1 done 2026-09-29 (~61 frames/s, see the measured facts above). M4's tools are in `tools/`;
+a long band capture has run on the Mac since 2026-09-29 19:15; no labelled recording yet.
 
 ## Decisions
 
