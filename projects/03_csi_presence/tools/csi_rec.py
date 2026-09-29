@@ -22,6 +22,7 @@ doesn't reset the board either. Stop it before flashing or attaching: two reader
 bytes between them.
 """
 import argparse
+import collections
 import glob
 import os
 import re
@@ -35,7 +36,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from csi_motion import Bands, amplitudes, band_line  # noqa: E402
 
 RAW_STATE = re.compile(rb"raw_dump=(\d)")
-RAW_LINE = re.compile(rb"^raw s=(\d+) t=(\d+) .* fi=(\d) len=(\d+) iq=(\S+)$")
+RAW_LINE = re.compile(rb"^raw s=(\d+) t=(\d+) rssi=-?\d+ nf=-?\d+ fmt=(\d+) rate=\d+ sl=(\d+)"
+                      rb" g=(\d) siga1=[0-9a-f]+ fi=(\d) len=(\d+) iq=(\S+)$")
 RELOCK = 100  # consecutive frames of another length before the reducer follows them
 
 
@@ -85,6 +87,9 @@ class Recorder:
     def __init__(self, out, port, want_raw, bands):
         self.out, self.port, self.want_raw = out, port, want_raw
         self.bands = Bands() if bands else None
+        self.bands_k = Bands() if bands else None  # only frames of the locked kind
+        self.kind_lock, self.kind_mismatch = None, 0
+        self.kinds, self.kinds_sec, self.kinds_done = collections.Counter(), None, None
         self.fd, self.buf = None, b""
         self.raw_state = None
         self.last_raw = self.last_fix = 0.0
@@ -117,7 +122,8 @@ class Recorder:
             pass
         self.fd, self.buf, self.last_seq = None, b"", None
         if self.bands:
-            self.bands = Bands()  # drop the half-finished second
+            self.bands, self.bands_k = Bands(), Bands()  # drop the half-finished second
+            self.kinds, self.kinds_sec = collections.Counter(), None
         self.note(why)
         self.down = True
 
@@ -159,7 +165,7 @@ class Recorder:
         if self.bands is None:
             self.out.write(now, line.decode("ascii", "replace"))
             return
-        ln = int(m.group(4))
+        t_us, ln = int(m.group(2)), int(m.group(7))
         if ln != self.lock_len:
             self.mismatch += 1
             if self.lock_len is not None and self.mismatch < RELOCK:
@@ -167,10 +173,27 @@ class Recorder:
             self.note(f"reducer locked on len={ln}")
             self.lock_len = ln
         self.mismatch = 0
-        amp = amplitudes(m.group(5).decode("ascii"), m.group(3) == b"1")
-        done = self.bands.add(int(m.group(2)), amp) if amp else None
+        # Kind of frame: format / group-addressed / MPDU length. The ping reply is 4/0/90.
+        kind = f"{int(m.group(3))}/{int(m.group(5))}/{int(m.group(4))}"
+        if kind != self.kind_lock:
+            self.kind_mismatch += 1
+            if self.kind_lock is None or self.kind_mismatch >= RELOCK:
+                self.note(f"reducer kind lock {kind}")
+                self.kind_lock, self.kind_mismatch = kind, 0
+        else:
+            self.kind_mismatch = 0
+        sec = t_us // 1_000_000
+        if sec != self.kinds_sec:
+            self.kinds_done, self.kinds, self.kinds_sec = self.kinds, collections.Counter(), sec
+        self.kinds[kind] += 1
+        amp = amplitudes(m.group(8).decode("ascii"), m.group(6) == b"1")
+        if not amp:
+            return
+        done = self.bands.add(t_us, amp)
+        done_k = self.bands_k.add(t_us, amp) if kind == self.kind_lock else self.bands_k.tick(t_us)
         if done:
-            self.out.write(now, band_line(done))
+            self.out.write(now, band_line(done, done_k or {"n": 0, "motion": 0.0,
+                                                         "bands": [-1] * 16}, self.kinds_done))
 
     def set_raw(self, want):
         """'c' toggles the dump; send it until the board reports the state we want."""

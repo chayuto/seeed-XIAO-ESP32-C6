@@ -66,6 +66,12 @@ class Bands:
     def __init__(self):
         self.sec, self.n, self.s, self.s2 = None, 0, None, None
 
+    def tick(self, t_us):
+        """Close the current second if t_us is past it (for frames this one skips)."""
+        if self.sec is not None and t_us // 1_000_000 != self.sec:
+            return self.close()
+        return None
+
     def add(self, t_us, amp):
         sec = t_us // 1_000_000
         done = None
@@ -100,12 +106,20 @@ class Bands:
         return {"sec": sec, "n": n, "motion": motion, "bands": bands}
 
 
-def band_line(sec):
-    return (f"band t={sec['sec']} n={sec['n']} motion={sec['motion']:.1f} b="
+def band_line(sec, locked=None, kinds=None):
+    """One second: all frames (n, motion, b), then only the frames of the locked kind
+    (nk, mk, bk) and the kinds seen, as fmt/group/MPDU-length:count, most common first."""
+    line = (f"band t={sec['sec']} n={sec['n']} motion={sec['motion']:.1f} b="
             + ",".join(str(v) for v in sec["bands"]))
+    if locked is not None:
+        line += (f" nk={locked['n']} mk={locked['motion']:.1f} bk="
+                 + ",".join(str(v) for v in locked["bands"]))
+    if kinds:
+        line += " kinds=" + ",".join(f"{k}:{c}" for k, c in kinds.most_common(4))
+    return line
 
 
-def parse(paths):
+def parse(paths, locked_only=False):
     labels, frames, mlines, seconds = [], [], [], []
     wrap, prev = 0, None
     for path in paths:
@@ -128,6 +142,10 @@ def parse(paths):
                 frames.append((t + wrap, ht, int(kv["len"]), kv["fi"] == "1", kv["iq"]))
             elif body.startswith("band t="):
                 kv = dict(x.split("=", 1) for x in body.split()[1:])
+                if locked_only:
+                    if "mk" not in kv:
+                        continue
+                    kv["motion"], kv["n"], kv["b"] = kv["mk"], kv["nk"], kv["bk"]
                 # host time of the line is when the second closed: centre is ~0.5 s before
                 seconds.append((ht - 0.5, float(kv["motion"]), int(kv["n"]),
                                 [int(v) for v in kv["b"].split(",")]))
@@ -327,9 +345,11 @@ def main():
     ap.add_argument("--bin", type=int, default=0, help="seconds per map column (auto)")
     ap.add_argument("--hours", type=float, default=0, help="map only the last H hours")
     ap.add_argument("--rows", type=int, default=8, help="channel slices in the map (<=16)")
+    ap.add_argument("--locked", action="store_true",
+                    help="band lines: use only the frames of the locked kind (mk/bk)")
     args = ap.parse_args()
 
-    labels, frames, mlines, seconds = parse(sorted(args.rec))
+    labels, frames, mlines, seconds = parse(sorted(args.rec), args.locked)
     if not frames and not mlines and not seconds:
         sys.exit("no raw, band or m lines in " + " ".join(args.rec))
     if args.map:

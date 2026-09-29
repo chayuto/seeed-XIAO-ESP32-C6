@@ -150,6 +150,27 @@ the first 30 s recording it agreed with the board (median 24.7 vs 25.0, p90 116 
 M1 done 2026-09-29 (~61 frames/s, see the measured facts above). M4's tools are in `tools/`;
 a long band capture has run on the Mac since 2026-09-29 19:15; no labelled recording yet.
 
+### First night on the band capture (2026-09-29 19:15 to 09-30 08:05)
+
+- 12.8 h: the board never rebooted or dropped Wi-Fi. `dropped` rose 120 to 164, all in
+  bursts between 21:34 and 22:15. The Mac stopped reading three times between 07:08 and
+  07:47 (asleep or lid shut), so 96% coverage.
+- **Calibrated with the house empty** (09-30 08:07, `b`): mean 20.0, sd 3.8, threshold 35.1
+  (was the default 60). Replaying the night's 1 Hz scores through the presence rules: with
+  people home in the evening, present 92% of the time in 8 episodes (61% in 40 at 60); the
+  empty house from 08:04, 0%.
+- **The night was not people.** For 1.9 h of the night the router sent 85+ frames/s instead
+  of ~62, and those seconds scored 150–800 (97% over 100) with one fixed shape across the
+  channel (the top slice ~780). At the normal frame rate the night's median was 19–20 and
+  no second went over 100. Bodies don't change the frame rate: the likely cause is extra
+  frames of another kind with the same `len`, which the `len` lock lets through, so the
+  score is computed across kinds after all. `csi_rec.py` now logs each second's frame kinds
+  (`kinds=` format/group/MPDU length) and a score from the locked kind alone (`nk`, `mk`,
+  `bk`; the ping reply is `4/0/90`), to confirm this before the firmware lock changes.
+- The empty house also shows short bursts in the lowest quarter of the channel only
+  (slices 0–3 up to ~90 while the rest sit at ~17): something narrowband nearby. Movement
+  lights up every slice at once, so a median across slices would ignore these.
+
 ## Decisions
 
 - **Amplitude only, no phase.** Phase on a single-antenna receiver has a random offset per
