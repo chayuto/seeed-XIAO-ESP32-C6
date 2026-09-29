@@ -1,0 +1,18 @@
+menu "03 CSI presence"
+
+config CSI_PING_INTERVAL_MS
+    int "Ping interval to the gateway (ms); each reply is one CSI frame"
+    range 5 1000
+    default 20
+
+config CSI_DEFAULT_THRESHOLD
+    int "Motion threshold before calibration (motion units, x1000 CV)"
+    range 1 100000
+    default 60
+
+config CSI_HOLD_S
+    int "Seconds below threshold before present clears"
+    range 5 3600
+    default 60
+
+endmenu
