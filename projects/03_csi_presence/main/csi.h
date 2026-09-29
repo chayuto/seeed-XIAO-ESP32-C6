@@ -19,6 +19,8 @@ typedef struct {
     uint32_t skip_len; // AP frames whose length didn't match the lock
     uint32_t trunc;    // longer than our buffer
     uint32_t relocks;
+    uint32_t raw_lines; // raw dump lines handed to the console
+    uint32_t raw_drop;  // raw dump lines dropped because the console fell behind
     uint16_t lock_len;
     int64_t last_frame_us; // 0 = never
 } csi_stats_t;

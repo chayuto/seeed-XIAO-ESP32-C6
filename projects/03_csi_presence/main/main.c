@@ -2,7 +2,7 @@
 // Pings the gateway so every reply is a CSI frame, scores per-second amplitude motion and
 // keeps a present/absent state with hysteresis. Design: docs/design/03_csi_presence.md.
 // Serial: 'i' status, 'r' restart, 'b' calibrate a 30 s empty-room baseline,
-// 'c' toggle raw per-frame amplitude dump, 'm' toggle the 1 Hz motion lines.
+// 'c' toggle the raw per-frame I/Q dump, 'm' toggle the 1 Hz motion lines.
 #include <inttypes.h>
 #include <math.h>
 #include <stdio.h>
@@ -102,11 +102,13 @@ static void log_status(void)
     ESP_LOGI(TAG, "hb up=%" PRIu64 " heap=%" PRIu32 " heap_min=%" PRIu32 " rssi=%d wifi=%d"
              " disconnects=%" PRIu32 " frames=%" PRIu32 " other=%" PRIu32 " dropped=%" PRIu32
              " skip_len=%" PRIu32 " trunc=%" PRIu32 " relocks=%" PRIu32 " lock_len=%u"
-             " last_frame_ms=%" PRId64 " motion=%.1f thr=%.1f cal=%d present=%d",
+             " last_frame_ms=%" PRId64 " raw=%d raw_lines=%" PRIu32 " raw_drop=%" PRIu32
+             " motion=%.1f thr=%.1f cal=%d present=%d",
              now / 1000000, esp_get_free_heap_size(), esp_get_minimum_free_heap_size(),
              wifi_sta_rssi(), wifi_sta_connected(), wifi_sta_disconnects(), st.frames, st.other,
              st.dropped, st.skip_len, st.trunc, st.relocks, st.lock_len,
-             st.last_frame_us ? (now - st.last_frame_us) / 1000 : -1, s_last_motion, s_thr, s_cal,
+             st.last_frame_us ? (now - st.last_frame_us) / 1000 : -1, csi_raw_dump(), st.raw_lines,
+             st.raw_drop, s_last_motion, s_thr, s_cal,
              s_present);
 }
 
@@ -149,7 +151,7 @@ static void on_second(const csi_second_t *s)
         s_state_since_us = now;
     }
 
-    if (s_motion_lines && !csi_raw_dump()) {
+    if (s_motion_lines) {
         ESP_LOGI(TAG, "m t=%" PRId64 " motion=%.1f thr=%.1f present=%d fps=%" PRIu32
                  " rssi=%d nf=%d%s",
                  now / 1000000, s->motion, s_thr, s_present, s->n, s->rssi, s->nf,

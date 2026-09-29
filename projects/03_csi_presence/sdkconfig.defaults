@@ -20,3 +20,8 @@ CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
 
 # Channel state information from the Wi-Fi driver (off by default)
 CONFIG_ESP_WIFI_CSI_ENABLED=y
+
+# Console on the USB port only. The IDF default is UART0 at 115200 with USB as a copy, and
+# every line waits for the UART (~11.5 KB/s): the raw dump blocked the CSI task, starved the
+# ping task and cut the frame rate from ~55/s to ~18/s (2026-09-29).
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

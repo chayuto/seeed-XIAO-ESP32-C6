@@ -10,6 +10,7 @@
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/message_buffer.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "ping/ping_sock.h"
@@ -21,21 +22,32 @@ static const char *TAG = "csi";
 #define CSI_MAX_SUB (CSI_MAX_BYTES / 2)
 #define QUEUE_LEN 12
 #define RELOCK_MIN 10                // mismatched frames in a window with no match
+#define CSI_TASK_PRIO 6
+#define PING_TASK_PRIO 7             // above the CSI task: a busy CSI task drops frames (counted), never slows the source
+#define RAW_TASK_PRIO 3
+#define RAW_LINE_MAX (160 + (CSI_MAX_BYTES + 2) / 3 * 4) // header + base64 of the I/Q bytes
+#define RAW_BUF_BYTES (12 * 1024)    // ~14 lines at len=512
 
 typedef struct {
     uint32_t ts;
+    uint32_t siga1;    // HE-SIG-A1 / HT-SIG (MCS, bandwidth, GI), kept for offline sorting
+    uint16_t sig_len;  // MPDU length: tells ping replies from other frames
     int8_t rssi;
     int8_t nf;
     uint8_t fmt;
+    uint8_t rate;
+    bool group;
     bool first_invalid;
     uint16_t len;
     int8_t buf[CSI_MAX_BYTES];
 } frame_t;
 
 static QueueHandle_t s_queue;
+static MessageBufferHandle_t s_raw_buf;
 static csi_second_cb_t s_on_second;
 static uint8_t s_bssid[6];
 static volatile bool s_raw;
+static uint32_t s_raw_seq;
 static csi_stats_t s_stats; // counters written by the Wi-Fi task and the CSI task only
 static frame_t s_scratch;   // the Wi-Fi task's copy buffer (one callback at a time)
 
@@ -57,9 +69,13 @@ static void csi_cb(void *ctx, wifi_csi_info_t *info)
         len = CSI_MAX_BYTES;
     }
     s_scratch.ts = info->rx_ctrl.timestamp;
+    s_scratch.siga1 = info->rx_ctrl.he_siga1;
+    s_scratch.sig_len = info->rx_ctrl.sig_len;
     s_scratch.rssi = info->rx_ctrl.rssi;
     s_scratch.nf = info->rx_ctrl.noise_floor;
     s_scratch.fmt = info->rx_ctrl.cur_bb_format;
+    s_scratch.rate = info->rx_ctrl.rate;
+    s_scratch.group = info->rx_ctrl.is_group;
     s_scratch.first_invalid = info->first_word_invalid;
     s_scratch.len = len;
     memcpy(s_scratch.buf, info->buf, len);
@@ -67,8 +83,8 @@ static void csi_cb(void *ctx, wifi_csi_info_t *info)
 }
 
 // |H_k| for each subcarrier, normalised by the frame's mean over non-null tones.
-// Returns the subcarrier count, or 0 if the frame is all nulls; *mean_out gets the raw mean.
-static int amplitudes(const frame_t *f, float *amp, float *mean_out)
+// Returns the subcarrier count, or 0 if the frame is all nulls.
+static int amplitudes(const frame_t *f, float *amp)
 {
     int n = f->len / 2;
     int start = f->first_invalid ? 2 : 0; // 4 invalid bytes = 2 subcarriers
@@ -88,23 +104,51 @@ static int amplitudes(const frame_t *f, float *amp, float *mean_out)
     }
     if (nonzero == 0 || total <= 0) return 0;
     float mean = total / nonzero;
-    *mean_out = mean;
     for (int k = 0; k < n; k++) amp[k] /= mean;
     return n;
 }
 
-static void raw_dump(const frame_t *f, const float *amp, int n, float mean_scale)
+static int base64(const uint8_t *in, int n, char *out)
 {
-    // Amplitude as one hex byte per subcarrier (un-normalised; int8 I/Q so |H| < 182).
-    static char line[CSI_MAX_SUB * 2 + 96];
-    int p = snprintf(line, sizeof(line), "raw t=%" PRIu32 " rssi=%d fmt=%u n=%d a=", f->ts,
-                     f->rssi, f->fmt, n);
-    for (int k = 0; k < n && p < (int)sizeof(line) - 3; k++) {
-        int v = (int)lroundf(amp[k] * mean_scale);
-        if (v > 255) v = 255;
-        p += snprintf(line + p, sizeof(line) - p, "%02x", v);
+    static const char T[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int o = 0;
+    for (int i = 0; i < n; i += 3) {
+        uint32_t v = (uint32_t)in[i] << 16 | (i + 1 < n ? in[i + 1] << 8 : 0) |
+                     (i + 2 < n ? in[i + 2] : 0);
+        out[o++] = T[v >> 18 & 63];
+        out[o++] = T[v >> 12 & 63];
+        out[o++] = i + 1 < n ? T[v >> 6 & 63] : '=';
+        out[o++] = i + 2 < n ? T[v & 63] : '=';
     }
-    puts(line);
+    return o;
+}
+
+// One line per AP frame: metadata plus the exact I/Q bytes (int8 pairs, imaginary first) in
+// base64. Formatted here, printed by raw_task, so a slow or absent reader never stalls the
+// scoring; s= has a gap wherever a line was dropped.
+static void raw_dump(const frame_t *f)
+{
+    static char line[RAW_LINE_MAX];
+    int p = snprintf(line, sizeof(line),
+                     "raw s=%" PRIu32 " t=%" PRIu32 " rssi=%d nf=%d fmt=%u rate=%u sl=%u g=%d"
+                     " siga1=%08" PRIx32 " fi=%d len=%u iq=",
+                     s_raw_seq++, f->ts, f->rssi, f->nf, f->fmt, f->rate, f->sig_len, f->group,
+                     f->siga1, f->first_invalid, f->len);
+    p += base64((const uint8_t *)f->buf, f->len, line + p);
+    if (xMessageBufferSend(s_raw_buf, line, p, 0) == (size_t)p) s_stats.raw_lines++;
+    else s_stats.raw_drop++;
+}
+
+static void raw_task(void *arg)
+{
+    static char line[RAW_LINE_MAX + 1];
+    for (;;) {
+        size_t n = xMessageBufferReceive(s_raw_buf, line, RAW_LINE_MAX, portMAX_DELAY);
+        if (n == 0) continue;
+        line[n++] = '\n';
+        fwrite(line, 1, n, stdout);
+        fflush(stdout);
+    }
 }
 
 // Mean over subcarriers of std/mean across the window, x1000.
@@ -135,6 +179,7 @@ static void csi_task(void *arg)
 
     for (;;) {
         if (xQueueReceive(s_queue, &f, pdMS_TO_TICKS(100)) == pdTRUE) {
+            if (s_raw) raw_dump(&f);
             if (s_stats.lock_len == 0) {
                 s_stats.lock_len = f.len;
                 ESP_LOGI(TAG, "csi_lock len=%u fmt=%u n_sub=%u src=" MACSTR, f.len, f.fmt,
@@ -145,8 +190,7 @@ static void csi_task(void *arg)
                 win_mismatch++;
                 cand_len = f.len;
             } else {
-                float mean = 1;
-                int n = amplitudes(&f, s_amp, &mean);
+                int n = amplitudes(&f, s_amp);
                 if (n > 0) {
                     for (int k = 0; k < n; k++) {
                         s_sum[k] += s_amp[k];
@@ -157,7 +201,6 @@ static void csi_task(void *arg)
                     last_nf = f.nf;
                     s_stats.frames++;
                     s_stats.last_frame_us = esp_timer_get_time();
-                    if (s_raw) raw_dump(&f, s_amp, n, mean);
                 }
             }
         }
@@ -207,9 +250,13 @@ static esp_err_t start_ping(void)
     esp_ping_config_t cfg = ESP_PING_DEFAULT_CONFIG();
     cfg.count = ESP_PING_COUNT_INFINITE;
     cfg.interval_ms = CONFIG_CSI_PING_INTERVAL_MS;
-    cfg.timeout_ms = 1000;
+    // esp_ping waits out the timeout on a lost reply, then vTaskDelayUntil catches up with
+    // back-to-back pings. At 1000 ms that was a 1 s gap followed by a ~50-frame burst that
+    // overflowed the queue (2026-09-29). A late reply still gives a CSI frame.
+    cfg.timeout_ms = 100;
     cfg.data_size = 8;
     cfg.task_stack_size = 3072;
+    cfg.task_prio = PING_TASK_PRIO;
     cfg.target_addr.type = ESP_IPADDR_TYPE_V4;
     cfg.target_addr.u_addr.ip4.addr = ip.gw.addr;
     esp_ping_callbacks_t cbs = {0};
@@ -229,8 +276,10 @@ esp_err_t csi_start(csi_second_cb_t on_second)
     memcpy(s_bssid, ap.bssid, 6);
 
     s_queue = xQueueCreate(QUEUE_LEN, sizeof(frame_t));
-    if (!s_queue) return ESP_ERR_NO_MEM;
-    if (xTaskCreate(csi_task, "csi", 4096, NULL, 6, NULL) != pdPASS) return ESP_ERR_NO_MEM;
+    s_raw_buf = xMessageBufferCreate(RAW_BUF_BYTES);
+    if (!s_queue || !s_raw_buf) return ESP_ERR_NO_MEM;
+    if (xTaskCreate(csi_task, "csi", 4096, NULL, CSI_TASK_PRIO, NULL) != pdPASS) return ESP_ERR_NO_MEM;
+    if (xTaskCreate(raw_task, "csi_raw", 3072, NULL, RAW_TASK_PRIO, NULL) != pdPASS) return ESP_ERR_NO_MEM;
 
     wifi_csi_config_t cfg = {
         .enable = 1,

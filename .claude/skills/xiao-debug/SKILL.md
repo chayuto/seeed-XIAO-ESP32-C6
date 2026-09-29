@@ -75,6 +75,10 @@ but nobody should have to replug it for us.
   default.** `CONFIG_ESP_TASK_WDT_TIMEOUT_S=90` (range 1-60) became 5, which would have
   rebooted the board on every 12 s network wait. After changing a numeric option, grep the
   generated `/tmp/xiao-c6-build/<p>/sdkconfig` to confirm it took.
+- **The IDF default console caps all output at ~11.5 KB/s.** It is UART0 at 115200 with USB
+  as a copy, and every print waits for the UART. Fine for logs; a bulk dump (03's raw CSI)
+  blocked its task ~48 ms a line. For heavy output set `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`
+  (USB only; the no-host case drops output after 50 ms instead of blocking).
 - **Wi-Fi blob warnings** at start (`ACK_TAB0`, `CTS_TAB0`, `(agc)`, `(trc)`, `<ba-add>`) are
   normal. Anything else at `W`/`E` deserves a look.
 
