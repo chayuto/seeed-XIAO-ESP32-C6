@@ -10,7 +10,9 @@ Every line is written as "<unix time> <console line>". OUT may hold strftime cod
 
 --raw    turn the board's per-frame I/Q dump on while recording (~170 MB an hour).
 --bands  turn it on too, but keep the raw lines out of the file: one "band" line per second
-         instead, the fluctuation of each of 16 slices of the channel (~20 MB a day).
+         instead, the fluctuation of each of 16 slices of the channel (~35 MB a day).
+         --burst-out FILE also keeps the raw lines from 5 s before to 5 s after any second
+         that looks like a router burst (85+ frames or a score of 150+), ~30 min a day at most.
 
 Meant to run for days: it reopens the port when it goes away (unplug, Mac sleep) and turns
 the dump back on when the board stops sending it (a reboot turns it off). Stops after
@@ -37,7 +39,9 @@ from csi_motion import Bands, amplitudes, band_line  # noqa: E402
 
 RAW_STATE = re.compile(rb"raw_dump=(\d)")
 RAW_LINE = re.compile(rb"^raw s=(\d+) t=(\d+) rssi=-?\d+ nf=-?\d+ fmt=(\d+) rate=\d+ sl=(\d+)"
-                      rb" g=(\d) siga1=[0-9a-f]+ fi=(\d) len=(\d+) iq=(\S+)$")
+                      rb" g=(\d) siga1=([0-9a-f]+) fi=(\d) len=(\d+) iq=(\S+)$")
+BURST_N, BURST_MOTION = 85, 150  # a second like this saves the raw lines around it
+BURST_BUDGET = 120_000          # raw lines per day in the burst file, ~30 min
 RELOCK = 100  # consecutive frames of another length before the reducer follows them
 
 
@@ -84,8 +88,11 @@ class Out:
 
 
 class Recorder:
-    def __init__(self, out, port, want_raw, bands):
+    def __init__(self, out, port, want_raw, bands, burst_out=None):
         self.out, self.port, self.want_raw = out, port, want_raw
+        self.burst_out = burst_out  # raw lines around bursty seconds (bands mode)
+        self.recent = collections.deque(maxlen=320)  # ~5 s of raw lines
+        self.burst_until, self.burst_day, self.burst_lines = 0.0, None, 0
         self.bands = Bands() if bands else None
         self.bands_k = Bands() if bands else None  # only frames of the locked kind
         self.kind_lock, self.kind_mismatch = None, 0
@@ -94,7 +101,7 @@ class Recorder:
         self.raw_state = None
         self.last_raw = self.last_fix = 0.0
         self.lock_len, self.mismatch = None, 0
-        self.n_lines = self.n_raw = self.gaps = self.reopens = 0
+        self.n_lines = self.n_raw = self.gaps = self.reopens = self.bad = 0
         self.last_seq = None
         self.down = False
 
@@ -145,7 +152,12 @@ class Recorder:
         self.buf += chunk
         *lines, self.buf = self.buf.split(b"\n")
         for line in lines:
-            self.handle(now, line.rstrip(b"\r"))
+            try:
+                self.handle(now, line.rstrip(b"\r"))
+            except Exception as e:  # a line damaged in transit must never stop the recording
+                self.bad += 1
+                if self.bad <= 20:
+                    self.note(f"bad line skipped ({self.bad}): {e!r}")
 
     def handle(self, now, line):
         self.n_lines += 1
@@ -165,7 +177,12 @@ class Recorder:
         if self.bands is None:
             self.out.write(now, line.decode("ascii", "replace"))
             return
-        t_us, ln = int(m.group(2)), int(m.group(7))
+        text = line.decode("ascii", "replace")
+        if self.burst_out:
+            self.recent.append((now, text))
+            if now < self.burst_until:
+                self.write_burst(now, text)
+        t_us, ln = int(m.group(2)), int(m.group(8))
         if ln != self.lock_len:
             self.mismatch += 1
             if self.lock_len is not None and self.mismatch < RELOCK:
@@ -173,8 +190,14 @@ class Recorder:
             self.note(f"reducer locked on len={ln}")
             self.lock_len = ln
         self.mismatch = 0
-        # Kind of frame: format / group-addressed / MPDU length. The ping reply is 4/0/90.
-        kind = f"{int(m.group(3))}/{int(m.group(5))}/{int(m.group(4))}"
+        # Kind of frame: format / group-addressed / MPDU length, and for HE SU the transmit
+        # settings that shape the channel estimate: bandwidth, GI+LTF size, space-time
+        # streams, beam change (HE-SIG-A1 bits 19-20, 21-22, 23-25, 1). MCS is left out.
+        fmt = int(m.group(3))
+        kind = f"{fmt}/{int(m.group(5))}/{int(m.group(4))}"
+        if fmt == 4:
+            a1 = int(m.group(6), 16)
+            kind += f"/b{a1 >> 19 & 3}l{a1 >> 21 & 3}s{a1 >> 23 & 7}c{a1 >> 1 & 1}"
         if kind != self.kind_lock:
             self.kind_mismatch += 1
             if self.kind_lock is None or self.kind_mismatch >= RELOCK:
@@ -186,14 +209,29 @@ class Recorder:
         if sec != self.kinds_sec:
             self.kinds_done, self.kinds, self.kinds_sec = self.kinds, collections.Counter(), sec
         self.kinds[kind] += 1
-        amp = amplitudes(m.group(8).decode("ascii"), m.group(6) == b"1")
-        if not amp:
+        amp = amplitudes(m.group(9).decode("ascii"), m.group(7) == b"1")
+        if not amp or 2 * len(amp) != ln:  # lost bytes still leave valid-looking base64
+            self.bad += 1
             return
         done = self.bands.add(t_us, amp)
         done_k = self.bands_k.add(t_us, amp) if kind == self.kind_lock else self.bands_k.tick(t_us)
         if done:
             self.out.write(now, band_line(done, done_k or {"n": 0, "motion": 0.0,
                                                          "bands": [-1] * 16}, self.kinds_done))
+            if self.burst_out and (done["n"] >= BURST_N or done["motion"] >= BURST_MOTION):
+                if now >= self.burst_until:  # a new burst: first the lines leading up to it
+                    self.write_burst(now, f"# burst n={done['n']} motion={done['motion']:.0f}")
+                    for t, old in self.recent:
+                        self.write_burst(t, old)
+                self.burst_until = now + 5
+
+    def write_burst(self, t, text):
+        day = time.strftime("%Y%m%d", time.localtime(t))
+        if day != self.burst_day:
+            self.burst_day, self.burst_lines = day, 0
+        if self.burst_lines < BURST_BUDGET:
+            self.burst_lines += 1
+            self.burst_out.write(t, text)
 
     def set_raw(self, want):
         """'c' toggles the dump; send it until the board reports the state we want."""
@@ -217,7 +255,7 @@ class Recorder:
 
     def stats(self):
         return (f"rec stats lines={self.n_lines} raw={self.n_raw} raw_missing={self.gaps} "
-                f"port_opens={self.reopens}")
+                f"bad={self.bad} port_opens={self.reopens}")
 
 
 def main():
@@ -227,6 +265,8 @@ def main():
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--raw", action="store_true", help="per-frame I/Q dump in the file")
     mode.add_argument("--bands", action="store_true", help="dump on, 1 band line/s in the file")
+    ap.add_argument("--burst-out", help="with --bands: also keep the raw lines around "
+                    "bursty seconds here (strftime codes allowed), ~30 min a day at most")
     ap.add_argument("--port")
     args = ap.parse_args()
     want_raw = args.raw or args.bands
@@ -241,7 +281,8 @@ def main():
     signal.signal(signal.SIGTERM, on_signal)
 
     out = Out(args.out)
-    rec = Recorder(out, args.port, want_raw, args.bands)
+    burst_out = Out(args.burst_out) if args.burst_out and args.bands else None
+    rec = Recorder(out, args.port, want_raw, args.bands, burst_out)
     t0 = last_stats = time.time()
     rec.note(f"rec start mode={'bands' if args.bands else 'raw' if args.raw else 'console'}")
     while not stop and (args.seconds <= 0 or time.time() - t0 < args.seconds):
@@ -270,6 +311,8 @@ def main():
     rec.note(rec.stats())
     rec.note("rec stop")
     out.close()
+    if burst_out:
+        burst_out.close()
     print(f"{time.time() - t0:.0f} s, {rec.n_lines} lines, {rec.n_raw} raw, "
           f"{rec.gaps} raw lines missing -> {out.name}", file=sys.stderr)
 

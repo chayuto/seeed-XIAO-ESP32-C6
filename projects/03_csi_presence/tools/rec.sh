@@ -19,7 +19,10 @@ case ${1:-status} in
 start)
     if running; then echo "already running (pid $(cat $PID))"; exit 0; fi
     mkdir -p logs
-    nohup $PY tools/csi_rec.py 'logs/csi-%Y%m%d.rec' --bands >> logs/csi_rec.out 2>&1 &
+    # Restart loop: a clean stop exits 0 and ends it; anything else restarts after 5 s.
+    nohup zsh -c "while :; do $PY tools/csi_rec.py 'logs/csi-%Y%m%d.rec' --bands --burst-out 'logs/csi-burst-%Y%m%d.rec' && break;
+        echo \"\$(date '+%F %T') recorder exited \$?, restarting\"; sleep 5; done" \
+        >> logs/csi_rec.out 2>&1 &
     echo $! > $PID
     nohup caffeinate -i -w "$(cat $PID)" > /dev/null 2>&1 &
     sleep 4
@@ -30,7 +33,7 @@ start)
     fi ;;
 stop)
     if ! running; then echo "not running"; exit 0; fi
-    kill -TERM "$(cat $PID)"
+    pkill -TERM -P "$(cat $PID)" -f csi_rec.py   # the recorder; its clean exit ends the loop
     for _ in {1..20}; do running || break; sleep 0.5; done
     if running; then echo "still running (pid $(cat $PID))"; exit 1; fi
     rm -f $PID

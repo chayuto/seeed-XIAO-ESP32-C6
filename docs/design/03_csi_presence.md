@@ -171,6 +171,26 @@ a long band capture has run on the Mac since 2026-09-29 19:15; no labelled recor
   (slices 0–3 up to ~90 while the rest sit at ~17): something narrowband nearby. Movement
   lights up every slice at once, so a median across slices would ignore these.
 
+### The empty house (2026-09-30 08:04 to 16:03)
+
+- **11:34 to 15:40, 4 h with no presence at all** at threshold 35.1.
+- **08:10 to 11:35: ~20 short presence episodes** (scores up to 258) at the normal frame
+  rate, with a smooth shape across the channel (strongest at the low end, dipping in the
+  middle). That is something physically moving, not the router; what, is still open.
+- **15:40: one router burst**: 118 and 94 frames/s, every frame a ping reply of the normal
+  kind (4/0/90), same step-and-spike shape as the night (top slice ~900–1080). So the extra
+  frames are the router sending the replies again in a way format and length don't show.
+  The kind now includes the HE-SIG-A1 settings that shape the channel estimate (bandwidth,
+  GI+LTF size, streams, beam change: `4/0/90/b0l1s0c1` normally), and `rec.sh` keeps the
+  raw lines from 5 s before to 5 s after any second with 85+ frames or a score of 150+
+  (`logs/csi-burst-*.rec`, ~30 min a day at most) to see exactly what differs.
+- **The board dropped ~350 frames from 15:00** while `raw_drop` rose with it: the Mac was
+  reading slowly and the CSI task waits on the console, because it prints the 1 Hz `m` line
+  itself. Fix to make with the kind lock: log from a separate low-priority task.
+- **The recorder died at 16:03** on a raw line damaged in transit (bad base64). Damaged
+  lines are now counted (`bad=`) and skipped, and `rec.sh` restarts the recorder if it ever
+  exits with an error. 16:03 to 18:07 is lost.
+
 ## Decisions
 
 - **Amplitude only, no phase.** Phase on a single-antenna receiver has a random offset per
